@@ -157,16 +157,22 @@ namespace MySql.Data.MySqlClient
             _defaultDatabaseCharSet = dtDBC.Rows[0][1].ToString();
 
             if (cmd.Connection.State != ConnectionState.Open)
+            {
                 cmd.Connection.Open();
+            }
 
-            //string aaa = cmd.Connection.ServerVersion;
 
             string[] vsa = ServerVersionNo.Split('.');
             string v = "";
             if (vsa.Length > 1)
+            {
                 v = vsa[0] + "." + vsa[1];
-            else
+            }
+            else 
+            {
                 v = vsa[0];
+            }
+
             double.TryParse(v, out _ServerMajorVersion);
 
             GetRoutines(ref cmd, "PROCEDURE");
@@ -210,9 +216,9 @@ namespace MySql.Data.MySqlClient
                         // It has been reported that, in some unknown cases, the query will return
                         // byte array.
                         // Report: http://www.codeproject.com/Messages/4450086/Small-changes-in-Code.aspx
-                        else if (ob is System.Byte[])
+                        else if (ob is Byte[])
                         {
-                            UTF8Encoding enc = new UTF8Encoding();
+                            var enc = new UTF8Encoding();
                             createSql = enc.GetString((byte[])ob);
                         }
 

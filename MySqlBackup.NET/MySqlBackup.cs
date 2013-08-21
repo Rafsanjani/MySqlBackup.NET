@@ -1,117 +1,171 @@
-﻿// The authors disclaims copyright of this project. Use at your own risk.
-// For bugs report, feature request, discussions, supports, please visit:
-// http://mysqlbackupnet.codeplex.com/
-//
-// In order for this class library to work, 
-// the following items are needed to add into your project.
-//
-// Required Dependencies:
-// 1. MySql.Data.DLL (http://www.mysql.com)
-// 2. DotNetZip (http://dotnetzip.codeplex.com/)
-
-using System;
-using System.Collections.Generic;
-using System.Text;
-using System.IO;
-using System.Data;
-using System.Globalization;
-using System.ComponentModel;
-using System.Timers;
-using Ionic.Zip;
-using System.Linq;
-
-namespace MySql.Data.MySqlClient
+﻿namespace MySql.Data.MySqlClient
 {
+    // The authors disclaims copyright of this project. Use at your own risk.
+    // For bugs report, feature request, discussions, supports, please visit:
+    // http://mysqlbackupnet.codeplex.com/
+    //
+    // In order for this class library to work, 
+    // the following items are needed to add into your project.
+    //
+    // Required Dependencies:
+    // 1. MySql.Data.DLL (http://www.mysql.com)
+    // 2. DotNetZip (http://dotnetzip.codeplex.com/)
+
+    #region Using Directives
+
+    using System;
+    using System.Collections.Generic;
+    using System.ComponentModel;
+    using System.Data;
     using System.Diagnostics;
+    using System.Globalization;
+    using System.IO;
+    using System.Linq;
+    using System.Text;
+
+    using Ionic.Zip;
+    using Ionic.Zlib;
 
     using Microsoft.Win32;
 
     using MySql.Data.MySqlClient.Compression;
+    using MySql.Data.Types;
+
+    #endregion
 
     /// <summary>
     /// Backup and Restore of MySQL database.
     /// </summary>
     public class MySqlBackup : IDisposable
     {
+        #region Constants
+
         /// <summary>
         /// Release Verson of MySqlBackup.NET
         /// </summary>
-        public const string Version = "1.5.7 beta";
-
-        #region Private Field / Variables
-
-        MySqlConnection _conn = new MySqlConnection();
-        MySqlCommand _cmd = new MySqlCommand();
-        ExportInformations _exportInfo = new ExportInformations();
-        ImportInformations _importInfo = new ImportInformations();
-        Database _database = null;
-
-        Methods methods;
-        NumberFormatInfo nf;
-        DateTimeFormatInfo df;
-        Encoding utf8WithoutBOM;
-        TextReader textReader;
-        TextWriter textWriter;
-
-        bool cancelProcess = false;
-
-        BackgroundWorker bwExport;
-        BackgroundWorker bwImport;
-
-        string _delimeter = "|";
+        public const string Version = "1.5.8";
 
         #endregion
 
-        #region Events
+        #region Fields
 
-        ImportCompleteArg importCompleteArg;
-        ImportProgressArg importProgressArg;
-        ExportCompleteArg exportCompleteArg;
-        ExportProgressArg exportProgressArg;
+        private MySqlCommand _cmd = new MySqlCommand();
+
+        private MySqlConnection _conn = new MySqlConnection();
+
+        private Database _database;
+
+        private string _delimeter = "|";
+
+        private ExportInformation _exportInfo = new ExportInformation();
+
+        private ImportInformations _importInfo = new ImportInformations();
+
+        private BackgroundWorker importBackgroundWorker;
+
+        private bool cancelProcess;
+
+        private DateTimeFormatInfo df;
+
+        private ExportCompleteArg exportCompleteArg;
+
+        private ExportProgressArg exportProgressArg;
+
+        private ImportCompleteArg importCompleteArg;
+
+        private ImportProgressArg importProgressArg;
+
+        private Methods methods;
+
+        private NumberFormatInfo nf;
+
+        private TextReader textReader;
+
+        private TextWriter textWriter;
+
+        private Encoding utf8WithoutBOM;
+
+        #endregion
+
+        #region Constructors and Destructors
+
+        /// <summary>
+        /// Backup and Restore MySQL database.
+        /// </summary>
+        public MySqlBackup()
+        {
+            InitializeInternalComponent();
+        }
+
+        /// <summary>
+        /// Backup and Restore MySQL database.
+        /// </summary>
+        /// <param name="ConnectionString">Sets th MySQL connection parameters.</param>
+        public MySqlBackup(string ConnectionString): this(new MySqlConnection(ConnectionString))
+        {
+
+        }
+
+        /// <summary>
+        /// Backup and Restore MySQL database.
+        /// </summary>
+        /// <param name="Connection">Sets the MySqlConnection used by this instance.</param>
+        public MySqlBackup(MySqlConnection connection) :this()
+        {
+            Connection = connection;
+        }
+
+        /// <summary>
+        /// Backup and Restore MySQL database.
+        /// </summary>
+        /// <param name="Command">Sets the MySqlCommand used by this instance.</param>
+        public MySqlBackup(MySqlCommand Command)
+        {
+            _conn = Command.Connection;
+            _cmd = Command;
+            _database = new Database(ref _cmd);
+            InitializeInternalComponent();
+        }
+
+        #endregion
+
+        #region Delegates
+
+        public delegate void exportComplete(object sender, ExportCompleteArg e);
+
+        public delegate void exportProgressChange(object sender, ExportProgressArg e);
 
         public delegate void importComplete(object sender, ImportCompleteArg e);
 
-        /// <summary>
-        /// Occur when Import process is finished.
-        /// </summary>
-        public event importComplete ImportCompleted;
-
         public delegate void importProgressChange(object sender, ImportProgressArg e);
 
-        /// <summary>
-        /// Occur when a line in the dump file is imported.
-        /// </summary>
-        public event importProgressChange ImportProgressChanged;
+        #endregion
 
-        public delegate void exportComplete(object sender, ExportCompleteArg e);
+        #region Public Events
 
         /// <summary>
         /// Occur when Export processs is finished.
         /// </summary>
         public event exportComplete ExportCompleted;
 
-
-        public delegate void exportProgressChange(object sender, ExportProgressArg e);
-
         /// <summary>
         /// Occur when a row of data is exported or calculation of total rows of a table is completed.
         /// </summary>
         public event exportProgressChange ExportProgressChanged;
 
+        /// <summary>
+        /// Occur when Import process is finished.
+        /// </summary>
+        public event importComplete ImportCompleted;
+
+        /// <summary>
+        /// Occur when a line in the dump file is imported.
+        /// </summary>
+        public event importProgressChange ImportProgressChanged;
+
         #endregion
 
         #region Public Properties
-
-        /// <summary>
-        /// Gets the infomations about the connected database.
-        /// </summary>
-        public Database DatabaseInfo
-        {
-            get
-            {
-                return _database;
-            }
-        }
 
         /// <summary>
         /// Gets or Sets the MySqlConnection that used by this instance.
@@ -132,9 +186,20 @@ namespace MySql.Data.MySqlClient
         }
 
         /// <summary>
+        /// Gets the infomations about the connected database.
+        /// </summary>
+        public Database DatabaseInfo
+        {
+            get
+            {
+                return _database;
+            }
+        }
+
+        /// <summary>
         /// Gets or Sets the Informations that define behaviour of Export Process.
         /// </summary>
-        public ExportInformations ExportInfo
+        public ExportInformation ExportInfo
         {
             get
             {
@@ -143,9 +208,13 @@ namespace MySql.Data.MySqlClient
             set
             {
                 if (value == null)
-                    _exportInfo = new ExportInformations();
+                {
+                    _exportInfo = new ExportInformation();
+                }
                 else
+                {
                     _exportInfo = value;
+                }
             }
         }
 
@@ -161,111 +230,459 @@ namespace MySql.Data.MySqlClient
             set
             {
                 if (value == null)
+                {
                     _importInfo = new ImportInformations();
+                }
                 else
+                {
                     _importInfo = value;
+                }
+            }
+        }
+
+        public string SystemDrivePath
+        {
+            get
+            {
+                return Path.GetPathRoot(Environment.SystemDirectory);
             }
         }
 
         #endregion
 
-        #region Constructors
+        #region Public Methods and Operators
 
         /// <summary>
-        /// Backup and Restore MySQL database.
+        /// Cancel the current executing export process.
         /// </summary>
-        public MySqlBackup()
+        public void CancelExport()
         {
-            InitializeInternalComponent();
+            cancelProcess = true;
         }
 
         /// <summary>
-        /// Backup and Restore MySQL database.
+        /// Cancel the current executing import process.
         /// </summary>
-        /// <param name="ConnectionString">Sets th MySQL connection parameters.</param>
-        public MySqlBackup(string ConnectionString)
+        public void CancelImport()
         {
-            Connection = new MySqlConnection(ConnectionString);
-            InitializeInternalComponent();
+            cancelProcess = true;
         }
 
         /// <summary>
-        /// Backup and Restore MySQL database.
+        /// Decrypt a SQL Dump File and save as new file.
         /// </summary>
-        /// <param name="Connection">Sets the MySqlConnection used by this instance.</param>
-        public MySqlBackup(MySqlConnection connection)
+        /// <param name="originalFile">The source of Encrypted SQL Dump File.</param>
+        /// <param name="newFile">The new file of Decrypted SQL Dump File.</param>
+        public void DecryptSqlDumpFile(string originalFile, string newFile, string encryptionKey)
         {
-            Connection = connection;
-            InitializeInternalComponent();
-        }
-
-        /// <summary>
-        /// Backup and Restore MySQL database.
-        /// </summary>
-        /// <param name="Command">Sets the MySqlCommand used by this instance.</param>
-        public MySqlBackup(MySqlCommand Command)
-        {
-            _conn = Command.Connection;
-            _cmd = Command;
-            _database = new Database(ref _cmd);
-            InitializeInternalComponent();
-        }
-
-        #endregion
-
-        private void InitializeInternalComponent()
-        {
-            nf = new NumberFormatInfo();
-            nf.NumberDecimalSeparator = ".";
-            nf.NumberGroupSeparator = string.Empty;
             methods = new Methods();
-            utf8WithoutBOM = new UTF8Encoding(false);
-            df = new DateTimeFormatInfo();
-            df.DateSeparator = "-";
-            df.TimeSeparator = ":";
+            encryptionKey = methods.Sha2Hash(encryptionKey);
+            int saltSize = methods.GetSaltSize(encryptionKey);
+
+            if (!File.Exists(originalFile))
+            {
+                throw new Exception("Original file is not exists.");
+            }
+
+            textReader = new StreamReader(originalFile, utf8WithoutBOM);
+
+            if (File.Exists(newFile))
+            {
+                File.Delete(newFile);
+            }
+
+            string line = "";
+
+            bool firstWrite = true;
+
+            while (line != null)
+            {
+                line = textReader.ReadLine();
+                if (line == null)
+                {
+                    continue;
+                }
+                line = methods.DecryptWithSalt(line, encryptionKey, saltSize);
+                if (line.StartsWith("-- ||||"))
+                {
+                    line = "";
+                }
+                TextWriter textWriter = new StreamWriter(newFile, !firstWrite, utf8WithoutBOM);
+                textWriter.WriteLine(line);
+                textWriter.Close();
+
+                firstWrite = false;
+            }
+            methods = null;
         }
 
-        #region Export / Backup
+        /// <summary>
+        /// Delete all rows in all tables.
+        /// </summary>
+        /// <param name="resetAutoIncrement">Sets a value indicates whether Auto-Increment should reset to 1.</param>
+        public void DeleteAllRows(bool resetAutoIncrement)
+        {
+            DeleteAllRows(resetAutoIncrement, null);
+        }
+
+        /// <summary>
+        /// Delete all rows in all tables.
+        /// </summary>
+        /// <param name="resetAutoIncrement">Sets a value indicates whether Auto-Increment should reset to 1.</param>
+        /// <param name="excludeTables">Exclude these tables from rows deletion.</param>
+        public void DeleteAllRows(bool resetAutoIncrement, string[] excludeTables)
+        {
+            if (_conn.State != ConnectionState.Open)
+            {
+                _conn.Open();
+            }
+
+            string[] tables = _database.TableNames;
+
+            foreach (string t in tables)
+            {
+                bool skipThisTable = false;
+
+                if (excludeTables != null && excludeTables.Length > 0)
+                {
+                    foreach (string s in excludeTables)
+                    {
+                        if (s == t)
+                        {
+                            skipThisTable = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (skipThisTable)
+                {
+                    continue;
+                }
+
+                _cmd.CommandText = "DELETE FROM `" + t + "`;";
+                _cmd.ExecuteNonQuery();
+                if (resetAutoIncrement)
+                {
+                    _cmd.CommandText = "ALTER TABLE `" + t + "` AUTO_INCREMENT = 1;";
+                    _cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Release all resources used by this instance.  
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+        }
+
+        /// <summary>
+        /// Release all resources used by this instance. Determine whether MySqlConnection and MySqlCommand used by this instance should remain.
+        /// </summary>
+        /// <param name="disposeConnection">Sets a value indicates whether MySqlConnection and MySqlCommand used by this instance should remain.</param>
+        public void Dispose(bool disposeConnection)
+        {
+            if (textReader != null)
+            {
+                textReader.Close();
+            }
+
+            if (textWriter != null)
+            {
+                textWriter.Close();
+            }
+
+            methods = null;
+            textReader = null;
+            textWriter = null;
+
+            if (disposeConnection)
+            {
+                try
+                {
+                    if (_conn != null)
+                    {
+                        if (_conn.State != ConnectionState.Closed)
+                        {
+                            _conn.Close();
+                        }
+                    }
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    _conn = null;
+                    _cmd = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Encrypt a SQL Dump File and save as new file.
+        /// </summary>
+        /// <param name="originalFile">The source of SQL Dump File.</param>
+        /// <param name="newFile">The new file of Encrypted SQL Dump File.</param>
+        public void EncryptSqlDumpFile(string originalFile, string newFile, string encryptionKey)
+        {
+            methods = new Methods();
+            encryptionKey = methods.Sha2Hash(encryptionKey);
+            int saltSize = methods.GetSaltSize(encryptionKey);
+
+            if (!File.Exists(originalFile))
+            {
+                throw new Exception("Original file does not exist.");
+            }
+
+            textReader = new StreamReader(originalFile, utf8WithoutBOM);
+
+            if (File.Exists(newFile))
+            {
+                File.Delete(newFile);
+            }
+
+            string line = "";
+
+            bool firstWrite = true;
+
+            while (line != null)
+            {
+                line = textReader.ReadLine();
+                if (line == null)
+                {
+                    continue;
+                }
+                if (line + "" == "")
+                {
+                    line = "-- ||||" + methods.RandomString(methods.random.Next(50, 300));
+                }
+                line = methods.EncryptWithSalt(line, encryptionKey, saltSize);
+                TextWriter textWriter = new StreamWriter(newFile, !firstWrite, utf8WithoutBOM);
+                textWriter.WriteLine(line);
+                textWriter.Close();
+
+                firstWrite = false;
+            }
+            methods = null;
+        }
+
+        /// <summary>
+        /// Escape string sequence of data and make it safe and compatible to used in SQL queries.
+        /// </summary>
+        /// <param name="data"></param>
+        public void EscapeStringSequence(ref string data)
+        {
+            var builder = new StringBuilder();
+            foreach (char ch in data)
+            {
+                switch (ch)
+                {
+                    case '\\': // Backslash
+                        builder.AppendFormat("\\\\");
+                        break;
+                    case '\r': // Carriage return
+                        builder.AppendFormat("\\r");
+                        break;
+                    case '\n': // New Line
+                        builder.AppendFormat("\\n");
+                        break;
+                    case '\a': // Vertical tab
+                        builder.AppendFormat("\\a");
+                        break;
+                    case '\b': // Backspace
+                        builder.AppendFormat("\\b");
+                        break;
+                    case '\f': // Formfeed
+                        builder.AppendFormat("\\f");
+                        break;
+                    case '\t': // Horizontal tab
+                        builder.AppendFormat("\\t");
+                        break;
+                    case '\v': // Vertical tab
+                        builder.AppendFormat("\\v");
+                        break;
+                    case '\"': // Double quotation mark
+                        builder.AppendFormat("\\\"");
+                        break;
+                    case '\'': // Single quotation mark
+                        builder.AppendFormat("\\\'");
+                        break;
+                    default:
+                        builder.Append(ch);
+                        break;
+                }
+            }
+            data = builder.ToString();
+        }
 
         /// <summary>
         /// Execute the export (backup) process. Sets the ExportInfo used by this export process.
         /// </summary>
         /// <param name="exportInfo">Sets the Informations that define behaviour of Export Process.</param>
-        public void Export(ExportInformations exportInfo)
-        {
-            ExportInfo = exportInfo;
-            Export();
-        }
-
-        /// <summary>
-        /// Execute the export (backup) process.
-        /// </summary>
-        public void Export()
+        public void Export(ExportInformation exportInfo)
         {
             if (_exportInfo.AsynchronousMode)
             {
-                bwExport = new BackgroundWorker();
-                bwExport.DoWork += new DoWorkEventHandler(bwExport_DoWork);
-                bwExport.RunWorkerAsync();
+                var exportBackgroundWorker = new BackgroundWorker();
+                exportBackgroundWorker.DoWork += ExportBackgroundWorkerDoWork;
+                exportBackgroundWorker.RunWorkerAsync();
             }
             else
             {
-                ExportExecute();
+                ExportExecute(exportInfo);
             }
         }
 
-        void bwExport_DoWork(object sender, DoWorkEventArgs e)
+        /// <summary>
+        /// Export BLOB data type and save as file.
+        /// </summary>
+        /// <param name="targetSaveFolder">The folder that the files will save to.</param>
+        /// <param name="table">The name of table that contains BLOB.</param>
+        /// <param name="colBlob">The name of column that contains BLOB data.</param>
+        /// <param name="colFileName">The name of column that contains file name.</param>
+        /// <param name="colFilesize">The name of column that contains the size of the BLOB.</param>
+        /// <returns></returns>
+        public void ExportBlobAsFile(
+            string targetSaveFolder, string table, string colBlob, string colFileName, string colFilesize)
         {
-            ExportExecute();
+            MySqlDataReader rdr;
+            try
+            {
+                if (_cmd.Connection.State != ConnectionState.Open)
+                {
+                    _cmd.Connection.Open();
+                }
+
+                string SQL;
+                UInt32 FileSize;
+                byte[] rawData;
+
+                SQL = "select `" + colFileName + "`, `" + colFilesize + "`, `" + colBlob + "` from `" + table + "`;";
+
+                _cmd.CommandText = SQL;
+
+                rdr = _cmd.ExecuteReader();
+
+                if (!rdr.HasRows)
+                {
+                    throw new Exception("There are no BLOBs to save");
+                }
+
+                while (rdr.Read())
+                {
+                    FileSize = rdr.GetUInt32(rdr.GetOrdinal(colFilesize));
+                    rawData = new byte[FileSize];
+
+                    rdr.GetBytes(rdr.GetOrdinal(colBlob), 0, rawData, 0, (int)FileSize);
+
+                    if (!Directory.Exists(targetSaveFolder))
+                    {
+                        Directory.CreateDirectory(targetSaveFolder);
+                    }
+
+                    using (
+                        FileStream fs = new FileStream(
+                            targetSaveFolder + "\\" + rdr[colFileName], FileMode.OpenOrCreate, FileAccess.Write))
+                    {
+                        fs.Write(rawData, 0, (int)FileSize);
+                        fs.Close();
+                    }
+                }
+                rdr.Close();
+            }
+            catch (Exception ex)
+            {
+                Dispose();
+                throw ex;
+            }
+            finally
+            {
+                Dispose();
+            }
         }
 
-        private void ExportExecute()
+        /// <summary>
+        /// Execute the import (restore) process. Sets the ImportInfo about this import process.
+        /// </summary>
+        /// <param name="importInfo">Sets the Informations that define behaviour of Import Process.</param>
+        public void Import(ImportInformations importInfo)
+        {
+            ImportInfo = importInfo;
+            Import();
+        }
+
+        /// <summary>
+        /// Execute the import process.
+        /// </summary>
+        public void Import()
+        {
+            if (_importInfo.AsynchronousMode)
+            {
+                importBackgroundWorker = new BackgroundWorker();
+                importBackgroundWorker.DoWork += ImportBackgroundWorkerDoWork;
+                importBackgroundWorker.RunWorkerAsync();
+            }
+            else
+            {
+                ImportExecute();
+            }
+        }
+
+        #endregion
+
+        #region Methods
+
+        private string Decrypt(string input)
+        {
+            if (input == null || input.Length == 0)
+            {
+                return input;
+            }
+            if (_importInfo.EnableEncryption)
+            {
+                string str = methods.DecryptWithSalt(input, _importInfo.EncryptionKey, _importInfo.SaltSize);
+                if (str == "-- ||||")
+                {
+                    return "";
+                }
+                else
+                {
+                    return str;
+                }
+            }
+            else
+            {
+                return input;
+            }
+        }
+
+        private string Encrypt(string input)
+        {
+            if (_exportInfo.EnableEncryption)
+            {
+                if (input == null || input.Length == 0)
+                {
+                    return methods.EncryptWithSalt(
+                        "-- ||||" + methods.RandomString(methods.random.Next(100, 500)),
+                        _exportInfo.EncryptionKey,
+                        _exportInfo.SaltSize);
+                }
+                return methods.EncryptWithSalt(input, _exportInfo.EncryptionKey, _exportInfo.SaltSize);
+            }
+            else
+            {
+                return input;
+            }
+        }
+
+        private void ExportExecute(ExportInformation exportInformation)
         {
             try
             {
-
-                ExportStart();
-
+                ExportStart(exportInformation);
             }
             catch (Exception ex)
             {
@@ -296,7 +713,7 @@ namespace MySql.Data.MySqlClient
             }
         }
 
-        private void ExportStart()
+        private void ExportStart(ExportInformation _exportInfo)
         {
             using (textWriter = new StreamWriter(_exportInfo.FileName, false, utf8WithoutBOM))
             {
@@ -320,7 +737,10 @@ namespace MySql.Data.MySqlClient
                 }
 
                 // If the connection is not opened, open it.
-                if (_conn.State != ConnectionState.Open) _conn.Open();
+                if (_conn.State != ConnectionState.Open)
+                {
+                    _conn.Open();
+                }
 
                 // Check if any database is selected to be exported.
                 _cmd.CommandText = "SELECT DATABASE();";
@@ -421,8 +841,7 @@ namespace MySql.Data.MySqlClient
                     tcs += 1;
                     if (ExportProgressChanged != null)
                     {
-                        exportProgressArg.PercentageGetTotalRowsCompleted =
-                            (int)(tcs / (double)_dicTableCustomSql.Count * (double)100);
+                        exportProgressArg.PercentageGetTotalRowsCompleted = (int)(tcs / _dicTableCustomSql.Count * 100);
                         ExportProgressChanged(this, exportProgressArg);
                     }
                 }
@@ -431,9 +850,15 @@ namespace MySql.Data.MySqlClient
 
                 #region Document Header
 
-                textWriter.WriteLine(Encrypt("-- MySqlBackup.NET dump " + MySqlBackup.Version));
-                if (_exportInfo.RecordDumpTime) textWriter.WriteLine(Encrypt("-- Dump time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
-                else textWriter.WriteLine(Encrypt("--"));
+                textWriter.WriteLine(Encrypt("-- MySqlBackup.NET dump " + Version));
+                if (_exportInfo.RecordDumpTime)
+                {
+                    textWriter.WriteLine(Encrypt("-- Dump time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
+                }
+                else
+                {
+                    textWriter.WriteLine(Encrypt("--"));
+                }
                 textWriter.WriteLine(Encrypt("-- ------------------------------------------------------"));
                 textWriter.WriteLine(Encrypt("-- Server version	" + DatabaseInfo.ServerVersion));
                 textWriter.WriteLine(Encrypt(""));
@@ -496,13 +921,14 @@ namespace MySql.Data.MySqlClient
                     if (ExportProgressChanged != null)
                     {
                         //exportProgressArg.TotalRowsInCurrentTable = DatabaseInfo.Tables[exportProgressArg.CurrentTableName].TotalRows;
-                        if (dicTableName_TotalRows.ContainsKey(kv.Key)) exportProgressArg.TotalRowsInCurrentTable = dicTableName_TotalRows[kv.Key];
+                        if (dicTableName_TotalRows.ContainsKey(kv.Key))
+                        {
+                            exportProgressArg.TotalRowsInCurrentTable = dicTableName_TotalRows[kv.Key];
+                        }
                         exportProgressArg.CurrentTableIndex += 1;
                         exportProgressArg.CurrentRowInCurrentTable = 0;
                         exportProgressArg.PercentageCompleted =
-                            (int)
-                            ((double)exportProgressArg.CurrentTableIndex / (double)exportProgressArg.TotalTables
-                             * (double)100);
+                            (int)(exportProgressArg.CurrentTableIndex / (double)exportProgressArg.TotalTables * 100);
                         ExportProgressChanged(this, exportProgressArg);
                     }
 
@@ -524,8 +950,10 @@ namespace MySql.Data.MySqlClient
                         textWriter.WriteLine(
                             Encrypt(DatabaseInfo.Tables[exportProgressArg.CurrentTableName].CreateTableSql));
                         if (_exportInfo.ResetAutoIncrement)
+                        {
                             textWriter.WriteLine(
                                 Encrypt("ALTER TABLE `" + exportProgressArg.CurrentTableName + "` AUTO_INCREMENT = 1;"));
+                        }
                     }
 
                     if (_exportInfo.ExportRows)
@@ -593,7 +1021,7 @@ namespace MySql.Data.MySqlClient
                                 sb.Append("\r\n");
                                 sb.Append(ValueString);
                             }
-                            else if (((long)sb.Length + (long)ValueString.Length) < _exportInfo.MaxSqlLength)
+                            else if ((sb.Length + (long)ValueString.Length) < _exportInfo.MaxSqlLength)
                             {
                                 sb.Append(",\r\n");
                                 sb.Append(ValueString);
@@ -612,7 +1040,6 @@ namespace MySql.Data.MySqlClient
                                 sb.Append("\r\n");
                                 sb.Append(ValueString);
                             }
-
                         }
                         rdr.Close();
 
@@ -641,7 +1068,7 @@ namespace MySql.Data.MySqlClient
 
                 #region Export Function
 
-                if (_exportInfo.ExportFunctions && DatabaseInfo.StoredFunction.Count != 0)
+                if (_exportInfo.ExportFunctions && DatabaseInfo.StoredFunction.Any())
                 {
                     textWriter.WriteLine(Encrypt(""));
                     textWriter.WriteLine(Encrypt(""));
@@ -667,7 +1094,7 @@ namespace MySql.Data.MySqlClient
 
                 #region Export Stored Procedure
 
-                if (_exportInfo.ExportStoredProcedures && DatabaseInfo.StoredProcedure.Count != 0)
+                if (_exportInfo.ExportStoredProcedures && DatabaseInfo.StoredProcedure.Any())
                 {
                     textWriter.WriteLine(Encrypt(""));
                     textWriter.WriteLine(Encrypt(""));
@@ -692,7 +1119,7 @@ namespace MySql.Data.MySqlClient
 
                 #region Export Events
 
-                if (_exportInfo.ExportEvents && DatabaseInfo.StoredEvents.Count != 0)
+                if (_exportInfo.ExportEvents && DatabaseInfo.StoredEvents.Any())
                 {
                     textWriter.WriteLine(Encrypt(""));
                     textWriter.WriteLine(Encrypt(""));
@@ -744,7 +1171,6 @@ namespace MySql.Data.MySqlClient
 
                 if (_exportInfo.ExportTriggers && DatabaseInfo.StoredTrigger.Count != 0)
                 {
-
                     textWriter.WriteLine(Encrypt(""));
                     textWriter.WriteLine(Encrypt(""));
                     textWriter.WriteLine(Encrypt("--"));
@@ -780,12 +1206,10 @@ namespace MySql.Data.MySqlClient
                 textWriter.WriteLine(Encrypt("/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;"));
                 textWriter.WriteLine(Encrypt("/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;"));
 
-
-
-
                 textWriter.Flush();
 
                 #region Reset max_allowed_packet to original value
+
                 try
                 {
                     _cmd.CommandText = "SET GLOBAL max_allowed_packet = " + originalMaxAllowedPacket + ";";
@@ -797,20 +1221,16 @@ namespace MySql.Data.MySqlClient
                     // Error will be trapped if the user does not has the privilege
                     // to modify GLOBAL variables.
                 }
+
                 #endregion
             }
 
             #endregion
 
-
-
-            #region Zip Output File
+            #region Compression
 
             if (ExportInfo.CompressionType != CompressionType.Off)
             {
-
-                
-
                 switch (ExportInfo.CompressionType)
                 {
                     case CompressionType.ZipFile:
@@ -821,11 +1241,8 @@ namespace MySql.Data.MySqlClient
                         break;
                     default:
                         throw new ArgumentOutOfRangeException();
-                        
                 }
             }
-
-
 
             #endregion
 
@@ -835,16 +1252,17 @@ namespace MySql.Data.MySqlClient
         private void GenerateSevenZipFile()
         {
             string location;
-            using (var subkey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"))
+            using (
+                RegistryKey subkey =
+                    Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"))
             {
-
-                var sevenZipKey = subkey.GetSubKeyNames().FirstOrDefault(f => f.Contains("7z"));
+                string sevenZipKey = subkey.GetSubKeyNames().FirstOrDefault(f => f.Contains("7z"));
                 if (string.IsNullOrEmpty(sevenZipKey))
                 {
                     throw new InvalidOperationException("Unable to find 7-Zip installation location");
                 }
 
-                using (var sevenKey = subkey.OpenSubKey(sevenZipKey))
+                using (RegistryKey sevenKey = subkey.OpenSubKey(sevenZipKey))
                 {
                     try
                     {
@@ -855,14 +1273,14 @@ namespace MySql.Data.MySqlClient
                         throw new Exception("Unable to get path of 7-zip location.");
                     }
                 }
-
             }
 
             string fullPathToZip = Path.Combine(location, "7z.exe");
 
             if (!File.Exists(fullPathToZip))
             {
-                throw new InvalidOperationException(string.Format("Found 7Zip path as: {0}, but it doesn't exist!", fullPathToZip));
+                throw new InvalidOperationException(
+                    string.Format("Found 7Zip path as: {0}, but it doesn't exist!", fullPathToZip));
             }
             string newFileName = Path.GetFileNameWithoutExtension(ExportInfo.FileName);
 
@@ -879,38 +1297,21 @@ namespace MySql.Data.MySqlClient
             }
 
             ExportInfo.FileName = newFileName;
-
-        }
-
-        public string SystemDrivePath
-        {
-            get
-            {
-                return Path.GetPathRoot(Environment.SystemDirectory);
-            }
         }
 
         private void GenerateZipFile()
         {
             using (ZipFile zip = new ZipFile())
             {
-                zip.CompressionLevel = Ionic.Zlib.CompressionLevel.BestCompression;
+                zip.CompressionLevel = CompressionLevel.BestCompression;
                 string newZipFileName = Path.GetFileNameWithoutExtension(ExportInfo.FileName) + ".zip";
 
                 string destionationFileName = Path.Combine(SystemDrivePath, newZipFileName);
-                
+
                 zip.AddFile(ExportInfo.FileName);
                 zip.Save(destionationFileName);
                 ExportInfo.FileName = destionationFileName;
             }
-        }
-
-        /// <summary>
-        /// Cancel the current executing export process.
-        /// </summary>
-        public void CancelExport()
-        {
-            cancelProcess = true;
         }
 
         private string GetInsertStatementHeader(string table, string[] columnNames)
@@ -936,11 +1337,11 @@ namespace MySql.Data.MySqlClient
             {
                 object ob = rdr[i];
 
-                if (ob == null || ob is System.DBNull)
+                if (ob == null || ob is DBNull)
                 {
                     sbData.Append("NULL,");
                 }
-                else if (ob is System.String)
+                else if (ob is String)
                 {
                     string data = ob.ToString();
 
@@ -948,15 +1349,15 @@ namespace MySql.Data.MySqlClient
 
                     sbData.Append(String.Format("'{0}',", data));
                 }
-                else if (ob is System.DateTime)
+                else if (ob is DateTime)
                 {
                     sbData.Append(String.Format("'{0}',", ((DateTime)ob).ToString("yyyy-MM-dd HH:mm:ss", df)));
                 }
-                else if (ob is System.Boolean)
+                else if (ob is Boolean)
                 {
                     sbData.Append(Convert.ToInt32(ob).ToString() + ",");
                 }
-                else if (ob is System.Byte[])
+                else if (ob is Byte[])
                 {
                     sbData.Append(methods.GetBLOBSqlDataStringFromBytes((byte[])ob) + ",");
                 }
@@ -1006,43 +1407,62 @@ namespace MySql.Data.MySqlClient
                 }
                 else if (ob is TimeSpan)
                 {
-                    sbData.Append("'" + ((TimeSpan)ob).Hours.ToString().PadLeft(2, '0') + ":" + ((TimeSpan)ob).Minutes.ToString().PadLeft(2, '0') + ":" + ((TimeSpan)ob).Seconds.ToString().PadLeft(2, '0') + "',");
+                    TimeSpan castedTimeSpan = (TimeSpan)ob;
+
+                    sbData.Append(
+                        "'" + (castedTimeSpan.Hours.ToString().PadLeft(2, '0') + ":"
+                        + (castedTimeSpan.Minutes.ToString().PadLeft(2, '0') + ":"
+                        + (castedTimeSpan.Seconds.ToString().PadLeft(2, '0') + "',"))));
                 }
-                else if (ob is MySql.Data.Types.MySqlDateTime)
+                else if (ob is MySqlDateTime)
                 {
-                    if (((MySql.Data.Types.MySqlDateTime)ob).IsNull)
+                    if (((MySqlDateTime)ob).IsNull)
                     {
                         sbData.Append("NULL,");
                     }
                     else
                     {
-                        string dataType = DatabaseInfo.Tables[exportProgressArg.CurrentTableName].ColumnDataType[rdr.GetName(i)];
-
-                        if (((MySql.Data.Types.MySqlDateTime)ob).IsValidDateTime)
+                        string dataType =
+                            DatabaseInfo.Tables[exportProgressArg.CurrentTableName].ColumnDataType[rdr.GetName(i)];
+                        MySqlDateTime convertedmySQLDateTimeTime = ((MySqlDateTime)ob); // no need to do is since the below code assumes it always is.
+                        DateTime convertedTime = convertedmySQLDateTimeTime.Value;
+                        if (convertedmySQLDateTimeTime.IsValidDateTime)
                         {
-                            DateTime dtime = ((MySql.Data.Types.MySqlDateTime)ob).Value;
 
                             if (dataType == "datetime")
-                                sbData.Append("'" + dtime.ToString("yyyy-MM-dd HH:mm:ss", df) + "',");
+                            {
+                                sbData.Append("'" + convertedTime.ToString("yyyy-MM-dd HH:mm:ss", df) + "',");
+                            }
                             else if (dataType == "date")
-                                sbData.Append("'" + dtime.ToString("yyyy-MM-dd", df) + "',");
+                            {
+                                sbData.Append("'" + convertedTime.ToString("yyyy-MM-dd", df) + "',");
+                            }
                             else if (dataType == "time")
-                                sbData.Append("'" + dtime.ToString("HH:mm:ss", df) + "',");
+                            {
+                                sbData.Append("'" + convertedTime.ToString("HH:mm:ss", df) + "',");
+                            }
                         }
                         else
                         {
                             if (dataType == "datetime")
+                            {
                                 sbData.Append("'0000-00-00 00:00:00',");
+                            }
                             else if (dataType == "date")
+                            {
                                 sbData.Append("'0000-00-00',");
+                            }
                             else if (dataType == "time")
+                            {
                                 sbData.Append("'00:00:00',");
+                            }
                         }
                     }
                 }
-                else if (ob is System.Guid)
+                else if (ob is Guid)
                 {
-                    string dataType = DatabaseInfo.Tables[exportProgressArg.CurrentTableName].ColumnDataType[rdr.GetName(i)];
+                    string dataType =
+                        DatabaseInfo.Tables[exportProgressArg.CurrentTableName].ColumnDataType[rdr.GetName(i)];
                     if (dataType == "binary(16)")
                     {
                         sbData.Append(methods.GetBLOBSqlDataStringFromBytes(((Guid)ob).ToByteArray()) + ",");
@@ -1054,97 +1474,15 @@ namespace MySql.Data.MySqlClient
                 }
                 else
                 {
-                    throw new Exception("Unhandled data type. Current processing data type: " + ob.GetType().ToString() + ". Please report this bug with this message to the development team.");
+                    throw new Exception(
+                        "Unhandled data type. Current processing data type: " + ob.GetType()
+                        + ". Please report this bug with this message to the development team.");
                 }
             }
 
             sbData.Remove(sbData.Length - 1, 1);
             sbData.Append(")");
             return sbData.ToString();
-        }
-
-        /// <summary>
-        /// Escape string sequence of data and make it safe and compatible to used in SQL queries.
-        /// </summary>
-        /// <param name="data"></param>
-        public void EscapeStringSequence(ref string data)
-        {
-            var builder = new StringBuilder();
-            foreach (var ch in data)
-            {
-                switch (ch)
-                {
-                    case '\\': // Backslash
-                        builder.AppendFormat("\\\\");
-                        break;
-                    case '\r': // Carriage return
-                        builder.AppendFormat("\\r");
-                        break;
-                    case '\n': // New Line
-                        builder.AppendFormat("\\n");
-                        break;
-                    case '\a': // Vertical tab
-                        builder.AppendFormat("\\a");
-                        break;
-                    case '\b': // Backspace
-                        builder.AppendFormat("\\b");
-                        break;
-                    case '\f': // Formfeed
-                        builder.AppendFormat("\\f");
-                        break;
-                    case '\t': // Horizontal tab
-                        builder.AppendFormat("\\t");
-                        break;
-                    case '\v': // Vertical tab
-                        builder.AppendFormat("\\v");
-                        break;
-                    case '\"': // Double quotation mark
-                        builder.AppendFormat("\\\"");
-                        break;
-                    case '\'': // Single quotation mark
-                        builder.AppendFormat("\\\'");
-                        break;
-                    default:
-                        builder.Append(ch);
-                        break;
-                }
-            }
-            data = builder.ToString();
-        }
-        #endregion
-
-        #region Import / Restore
-
-        /// <summary>
-        /// Execute the import (restore) process. Sets the ImportInfo about this import process.
-        /// </summary>
-        /// <param name="importInfo">Sets the Informations that define behaviour of Import Process.</param>
-        public void Import(ImportInformations importInfo)
-        {
-            ImportInfo = importInfo;
-            Import();
-        }
-
-        /// <summary>
-        /// Execute the import process.
-        /// </summary>
-        public void Import()
-        {
-            if (_importInfo.AsynchronousMode)
-            {
-                bwImport = new BackgroundWorker();
-                bwImport.DoWork += new DoWorkEventHandler(bwImport_DoWork);
-                bwImport.RunWorkerAsync();
-            }
-            else
-            {
-                ImportExecute();
-            }
-        }
-
-        void bwImport_DoWork(object sender, DoWorkEventArgs e)
-        {
-            ImportExecute();
         }
 
         private void ImportExecute()
@@ -1166,7 +1504,6 @@ namespace MySql.Data.MySqlClient
                     throw ex;
                 }
             }
-
 
             if (ImportProgressChanged != null)
             {
@@ -1212,13 +1549,18 @@ namespace MySql.Data.MySqlClient
             #endregion
 
             #region Check Connection
+
             if (_conn == null)
             {
-                throw new Exception("Connection has disposed. Set ImportSettings.AutoCloseConnection to false if you want to reuse this instance.");
+                throw new Exception(
+                    "Connection has disposed. Set ImportSettings.AutoCloseConnection to false if you want to reuse this instance.");
             }
 
             if (_cmd.Connection.State != ConnectionState.Open)
+            {
                 _cmd.Connection.Open();
+            }
+
             #endregion
 
             // Current value of max_allowed_packet will store here
@@ -1226,6 +1568,7 @@ namespace MySql.Data.MySqlClient
             string originalMaxAllowedPacket = "";
 
             #region Set max_allowed_packet to Maximum (1GB)
+
             try
             {
                 _cmd.CommandText = "SHOW GLOBAL VARIABLES LIKE 'max_allowed_packet';";
@@ -1251,6 +1594,7 @@ namespace MySql.Data.MySqlClient
                 // Error will be trapped if the user does not has the privilege
                 // to modify GLOBAL VARIABLES.
             }
+
             #endregion
 
             bool ignoreCreateDB = false;
@@ -1259,6 +1603,7 @@ namespace MySql.Data.MySqlClient
             string file = "";
 
             #region Extract file from Zip File
+
             if (Path.GetExtension(ImportInfo.FileName).ToLower() == ".zip")
             {
                 using (ZipFile zip = new ZipFile(ImportInfo.FileName))
@@ -1277,9 +1622,11 @@ namespace MySql.Data.MySqlClient
             {
                 file = ImportInfo.FileName;
             }
+
             #endregion
 
             #region Create or Use Database
+
             if (createDBSql != "")
             {
                 try
@@ -1310,6 +1657,7 @@ namespace MySql.Data.MySqlClient
                 try
                 {
                     #region Import process is called to stop
+
                     if (cancelProcess)
                     {
                         importCompleteArg.CompletedType = ImportCompleteArg.CompleteType.Cancelled;
@@ -1317,6 +1665,7 @@ namespace MySql.Data.MySqlClient
                         Dispose(_importInfo.AutoCloseConnection);
                         return;
                     }
+
                     #endregion
 
                     line = textReader.ReadLine();
@@ -1334,27 +1683,40 @@ namespace MySql.Data.MySqlClient
                         importProgressArg.CurrentByte += line.Length;
                         if (importProgressArg.CurrentByte != 0 && importProgressArg.TotalBytes != 0)
                         {
-                            importProgressArg.PercentageCompleted = (int)(((double)importProgressArg.CurrentByte / (double)importProgressArg.TotalBytes) * (double)100);
+                            importProgressArg.PercentageCompleted =
+                                (int)((importProgressArg.CurrentByte / (double)importProgressArg.TotalBytes) * 100);
                         }
                         ImportProgressChanged(this, importProgressArg);
                     }
+
                     #endregion
 
                     #region Detect Empty String, Do nothing if detect
+
                     if (line.Trim().Length == 0)
+                    {
                         continue;
+                    }
 
                     line = Decrypt(line).TrimEnd();
 
                     if (line.Length == 0)
+                    {
                         continue;
+                    }
                     if (line == "\r\n")
+                    {
                         continue;
+                    }
                     if (line.StartsWith("--"))
+                    {
                         continue;
+                    }
+
                     #endregion
 
                     #region Detect Char Set
+
                     if (!detectedCharSet)
                     {
                         if (line.StartsWith("/*!40101 SET NAMES ") || line.StartsWith("SET NAMES "))
@@ -1373,9 +1735,11 @@ namespace MySql.Data.MySqlClient
                             continue;
                         }
                     }
+
                     #endregion
 
                     #region Ignore Create Database if Target is Set
+
                     if (ignoreCreateDB)
                     {
                         if (!detectedCreateDatabase)
@@ -1395,11 +1759,13 @@ namespace MySql.Data.MySqlClient
                             }
                         }
                     }
+
                     #endregion
 
                     sb.Append(line);
 
                     #region Detect SQL Script
+
                     if (line.StartsWith("DELIMITER"))
                     {
                         string nextDelimiter = line.Replace("DELIMITER ", string.Empty);
@@ -1419,13 +1785,17 @@ namespace MySql.Data.MySqlClient
                             continue;
                         }
                     }
+
                     #endregion
 
                     #region Execute SQL Commands
+
                     if (IsScript)
                     {
                         sb.Append("\r\n");
+
                         #region Execute SQL Script
+
                         if (line.Contains(delimeter))
                         {
                             sb.Append(delimeter);
@@ -1439,16 +1809,18 @@ namespace MySql.Data.MySqlClient
                             ms.Execute();
                             ms = null;
                             if (!sqlExecutedOnce)
+                            {
                                 sqlExecutedOnce = true;
+                            }
                             sb = new StringBuilder();
                             IsScript = false;
                             continue;
                         }
                         else
                         {
-
                             continue;
                         }
+
                         #endregion
                     }
                     else
@@ -1456,6 +1828,7 @@ namespace MySql.Data.MySqlClient
                         if (line.EndsWith(";"))
                         {
                             #region Execute Single SQL Statement
+
                             //// Log Executed SQL - For debug use
                             //textWriter = new StreamWriter("D:\\Log2.txt", true, utf8WithoutBOM);
                             //textWriter.WriteLine(sb.ToString() + "\r\n");
@@ -1481,9 +1854,12 @@ namespace MySql.Data.MySqlClient
                             }
 
                             if (!sqlExecutedOnce)
+                            {
                                 sqlExecutedOnce = true;
+                            }
 
                             sb = new StringBuilder();
+
                             #endregion
                         }
                         else
@@ -1491,18 +1867,20 @@ namespace MySql.Data.MySqlClient
                             if (!isValidFile && !sqlExecutedOnce)
                             {
                                 string aa = line.ToLower();
-                                if (aa.StartsWith("/*!4") || aa.StartsWith("drop") || aa.StartsWith("create") ||
-                                    aa.StartsWith("delimeter") || aa.StartsWith("insert"))
+                                if (aa.StartsWith("/*!4") || aa.StartsWith("drop") || aa.StartsWith("create")
+                                    || aa.StartsWith("delimeter") || aa.StartsWith("insert"))
                                 {
                                     isValidFile = true;
                                 }
                                 else
                                 {
-                                    throw new Exception("This is not a valid SQL Dump File. No executeable SQL query found.");
+                                    throw new Exception(
+                                        "This is not a valid SQL Dump File. No executeable SQL query found.");
                                 }
                             }
                         }
                     }
+
                     #endregion
                 }
                 catch (Exception ex)
@@ -1525,6 +1903,7 @@ namespace MySql.Data.MySqlClient
                             ImportProgressChanged(this, importProgressArg);
                         }
                         continue;
+
                         #endregion
                     }
                     else
@@ -1549,8 +1928,8 @@ namespace MySql.Data.MySqlClient
                 throw new Exception("This is not a valid SQL Dump File. No executeable SQL query found.");
             }
 
-
             #region Reset max_allowed_packet to original value
+
             try
             {
                 _cmd.CommandText = "SET GLOBAL max_allowed_packet = " + originalMaxAllowedPacket + ";";
@@ -1562,304 +1941,34 @@ namespace MySql.Data.MySqlClient
                 // Error will be trapped if the user does not has the privilege
                 // to modify GLOBAL variables.
             }
-            #endregion
 
+            #endregion
 
             importCompleteArg.CompletedType = ImportCompleteArg.CompleteType.Completed;
         }
 
-        /// <summary>
-        /// Cancel the current executing import process.
-        /// </summary>
-        public void CancelImport()
+        private void InitializeInternalComponent()
         {
-            cancelProcess = true;
-        }
-        #endregion
-
-        #region Private Encryption Methods
-
-        private string Encrypt(string input)
-        {
-            if (_exportInfo.EnableEncryption)
-            {
-                if (input == null || input.Length == 0)
-                    return methods.EncryptWithSalt(
-                        "-- ||||" + methods.RandomString(methods.random.Next(100, 500)),
-                        _exportInfo.EncryptionKey,
-                        _exportInfo.SaltSize);
-                return methods.EncryptWithSalt(input, _exportInfo.EncryptionKey, _exportInfo.SaltSize);
-            }
-            else
-            {
-                return input;
-            }
+            nf = new NumberFormatInfo();
+            nf.NumberDecimalSeparator = ".";
+            nf.NumberGroupSeparator = string.Empty;
+            methods = new Methods();
+            utf8WithoutBOM = new UTF8Encoding(false);
+            df = new DateTimeFormatInfo();
+            df.DateSeparator = "-";
+            df.TimeSeparator = ":";
         }
 
-        private string Decrypt(string input)
+        private void ExportBackgroundWorkerDoWork(object sender, DoWorkEventArgs e)
         {
-            if (input == null || input.Length == 0)
-                return input;
-            if (_importInfo.EnableEncryption)
-            {
-                string str = methods.DecryptWithSalt(input, _importInfo.EncryptionKey, _importInfo.SaltSize);
-                if (str == "-- ||||")
-                    return "";
-                else
-                    return str;
-            }
-            else
-                return input;
+            ExportExecute(new ExportInformation());
+        }
+
+        private void ImportBackgroundWorkerDoWork(object sender, DoWorkEventArgs e)
+        {
+            ImportExecute();
         }
 
         #endregion
-
-        /// <summary>
-        /// Delete all rows in all tables.
-        /// </summary>
-        /// <param name="resetAutoIncrement">Sets a value indicates whether Auto-Increment should reset to 1.</param>
-        public void DeleteAllRows(bool resetAutoIncrement)
-        {
-            DeleteAllRows(resetAutoIncrement, null);
-        }
-
-        /// <summary>
-        /// Delete all rows in all tables.
-        /// </summary>
-        /// <param name="resetAutoIncrement">Sets a value indicates whether Auto-Increment should reset to 1.</param>
-        /// <param name="excludeTables">Exclude these tables from rows deletion.</param>
-        public void DeleteAllRows(bool resetAutoIncrement, string[] excludeTables)
-        {
-            if (_conn.State != ConnectionState.Open)
-                _conn.Open();
-
-            string[] tables = _database.TableNames;
-
-            foreach (string t in tables)
-            {
-                bool skipThisTable = false;
-
-                if (excludeTables != null && excludeTables.Length > 0)
-                {
-                    foreach (string s in excludeTables)
-                    {
-                        if (s == t)
-                        {
-                            skipThisTable = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (skipThisTable)
-                {
-                    continue;
-                }
-
-                _cmd.CommandText = "DELETE FROM `" + t + "`;";
-                _cmd.ExecuteNonQuery();
-                if (resetAutoIncrement)
-                {
-                    _cmd.CommandText = "ALTER TABLE `" + t + "` AUTO_INCREMENT = 1;";
-                    _cmd.ExecuteNonQuery();
-                }
-            }
-        }
-
-        /// <summary>
-        /// Decrypt a SQL Dump File and save as new file.
-        /// </summary>
-        /// <param name="originalFile">The source of Encrypted SQL Dump File.</param>
-        /// <param name="newFile">The new file of Decrypted SQL Dump File.</param>
-        public void DecryptSqlDumpFile(string originalFile, string newFile, string encryptionKey)
-        {
-            methods = new Methods();
-            encryptionKey = methods.Sha2Hash(encryptionKey);
-            int saltSize = methods.GetSaltSize(encryptionKey);
-
-            if (!File.Exists(originalFile))
-                throw new Exception("Original file is not exists.");
-
-            textReader = new StreamReader(originalFile, utf8WithoutBOM);
-
-            if (File.Exists(newFile))
-            {
-                File.Delete(newFile);
-            }
-
-            string line = "";
-
-            bool firstWrite = true;
-
-            while (line != null)
-            {
-                line = textReader.ReadLine();
-                if (line == null)
-                    continue;
-                line = methods.DecryptWithSalt(line, encryptionKey, saltSize);
-                if (line.StartsWith("-- ||||"))
-                    line = "";
-                TextWriter textWriter = new StreamWriter(newFile, !firstWrite, utf8WithoutBOM);
-                textWriter.WriteLine(line);
-                textWriter.Close();
-
-                firstWrite = false;
-            }
-            methods = null;
-        }
-
-        /// <summary>
-        /// Encrypt a SQL Dump File and save as new file.
-        /// </summary>
-        /// <param name="originalFile">The source of SQL Dump File.</param>
-        /// <param name="newFile">The new file of Encrypted SQL Dump File.</param>
-        public void EncryptSqlDumpFile(string originalFile, string newFile, string encryptionKey)
-        {
-            methods = new Methods();
-            encryptionKey = methods.Sha2Hash(encryptionKey);
-            int saltSize = methods.GetSaltSize(encryptionKey);
-
-            if (!File.Exists(originalFile))
-                throw new Exception("Original file is not exists.");
-
-            textReader = new StreamReader(originalFile, utf8WithoutBOM);
-
-            if (File.Exists(newFile))
-            {
-                File.Delete(newFile);
-            }
-
-            string line = "";
-
-            bool firstWrite = true;
-
-            while (line != null)
-            {
-                line = textReader.ReadLine();
-                if (line == null)
-                    continue;
-                if (line + "" == "")
-                    line = "-- ||||" + methods.RandomString(methods.random.Next(50, 300));
-                line = methods.EncryptWithSalt(line, encryptionKey, saltSize);
-                TextWriter textWriter = new StreamWriter(newFile, !firstWrite, utf8WithoutBOM);
-                textWriter.WriteLine(line);
-                textWriter.Close();
-
-                firstWrite = false;
-            }
-            methods = null;
-        }
-
-        /// <summary>
-        /// Export BLOB data type and save as file.
-        /// </summary>
-        /// <param name="targetSaveFolder">The folder that the files will save to.</param>
-        /// <param name="table">The name of table that contains BLOB.</param>
-        /// <param name="colBlob">The name of column that contains BLOB data.</param>
-        /// <param name="colFileName">The name of column that contains file name.</param>
-        /// <param name="colFilesize">The name of column that contains the size of the BLOB.</param>
-        /// <returns></returns>
-        public void ExportBlobAsFile(string targetSaveFolder, string table, string colBlob, string colFileName, string colFilesize)
-        {
-            MySqlDataReader rdr;
-            try
-            {
-                if (_cmd.Connection.State != ConnectionState.Open)
-                    _cmd.Connection.Open();
-
-                string SQL;
-                UInt32 FileSize;
-                byte[] rawData;
-
-                SQL = "select `" + colFileName + "`, `" + colFilesize + "`, `" + colBlob + "` from `" + table + "`;";
-
-                _cmd.CommandText = SQL;
-
-                rdr = _cmd.ExecuteReader();
-
-                if (!rdr.HasRows)
-                    throw new Exception("There are no BLOBs to save");
-
-                while (rdr.Read())
-                {
-
-                    FileSize = rdr.GetUInt32(rdr.GetOrdinal(colFilesize));
-                    rawData = new byte[FileSize];
-
-                    rdr.GetBytes(rdr.GetOrdinal(colBlob), 0, rawData, 0, (int)FileSize);
-
-                    if (!Directory.Exists(targetSaveFolder))
-                    {
-                        Directory.CreateDirectory(targetSaveFolder);
-                    }
-
-                    using (FileStream fs = new FileStream(targetSaveFolder + "\\" + rdr[colFileName], FileMode.OpenOrCreate, FileAccess.Write))
-                    {
-                        fs.Write(rawData, 0, (int)FileSize);
-                        fs.Close();
-                    }
-                }
-                rdr.Close();
-            }
-            catch (Exception ex)
-            {
-                Dispose();
-                throw ex;
-            }
-            finally
-            {
-                Dispose();
-            }
-        }
-
-        /// <summary>
-        /// Release all resources used by this instance.  
-        /// </summary>
-        public void Dispose()
-        {
-            Dispose(true);
-        }
-
-        /// <summary>
-        /// Release all resources used by this instance. Determine whether MySqlConnection and MySqlCommand used by this instance should remain.
-        /// </summary>
-        /// <param name="disposeConnection">Sets a value indicates whether MySqlConnection and MySqlCommand used by this instance should remain.</param>
-        public void Dispose(bool disposeConnection)
-        {
-            if (textReader != null)
-            {
-                textReader.Close();
-            }
-
-            if (textWriter != null)
-            {
-                textWriter.Close();
-            }
-
-            methods = null;
-            textReader = null;
-            textWriter = null;
-
-            if (disposeConnection)
-            {
-                try
-                {
-                    if (_conn != null)
-                    {
-                        if (_conn.State != ConnectionState.Closed)
-                        {
-                            _conn.Close();
-                        }
-                    }
-                }
-                catch
-                { }
-                finally
-                {
-                    _conn = null;
-                    _cmd = null;
-                }
-            }
-        }
     }
 }

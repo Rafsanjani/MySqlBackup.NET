@@ -2,6 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using System.Text;
     using Compression;
 
@@ -9,7 +10,7 @@
     /// <summary>
     /// Informations and Settings of MySQL Database Export Process
     /// </summary>
-    public class ExportInformations
+    public class ExportInformation
     {
         private string _encryptionKey = "1234";
         private int _saltSize = 0;
@@ -28,7 +29,9 @@
             {
                 _tableCustomSql = value;
                 if (_tableCustomSql == null)
+                {
                     return;
+                }
                 foreach (KeyValuePair<string, string> kv in _tableCustomSql)
                 {
                     if (kv.Value == null || kv.Value == "")
@@ -46,8 +49,10 @@
         {
             get
             {
-                if (TableCustomSql == null || TableCustomSql.Count == 0)
+                if (TableCustomSql == null || !TableCustomSql.Any())
+                {
                     return null;
+                }
                 else
                 {
                     string[] sa = new string[TableCustomSql.Count];
@@ -191,10 +196,5 @@
         public CompressionType CompressionType { get; set; }
 
         public ExportCompleteArg CompleteArg = null;
-
-        public ExportInformations()
-        {
-            
-        }
     }
 }

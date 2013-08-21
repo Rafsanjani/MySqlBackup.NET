@@ -53,7 +53,7 @@
     <Compile Include="Database.cs" />
     <Compile Include="ExportCompleteArg.cs" />
     <Compile Include="ExportProgressArg.cs" />
-    <Compile Include="ExportInformations.cs" />
+    <Compile Include="ExportInformation.cs" />
     <Compile Include="ImportCompleteArg.cs" />
     <Compile Include="ImportProgressArg.cs" />
     <Compile Include="ImportInformations.cs" />
