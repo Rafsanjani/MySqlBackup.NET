@@ -18,9 +18,16 @@ using System.Globalization;
 using System.ComponentModel;
 using System.Timers;
 using Ionic.Zip;
+using System.Linq;
 
 namespace MySql.Data.MySqlClient
 {
+    using System.Diagnostics;
+
+    using Microsoft.Win32;
+
+    using MySql.Data.MySqlClient.Compression;
+
     /// <summary>
     /// Backup and Restore of MySQL database.
     /// </summary>
@@ -256,10 +263,9 @@ namespace MySql.Data.MySqlClient
         {
             try
             {
-                using (textWriter = new StreamWriter(_exportInfo.FileName, false, utf8WithoutBOM))
-                {
-                    ExportStart();
-                }
+
+                ExportStart();
+
             }
             catch (Exception ex)
             {
@@ -292,482 +298,611 @@ namespace MySql.Data.MySqlClient
 
         private void ExportStart()
         {
-            cancelProcess = false;
-
-            InitializeInternalComponent();
-
-            exportProgressArg = new ExportProgressArg();
-            exportCompleteArg = new ExportCompleteArg();
-            exportCompleteArg.TimeStart = DateTime.Now;
-            exportCompleteArg.Error = null;
-
-            Dictionary<string, long> dicTableName_TotalRows = new Dictionary<string, long>();
-
-            #region Check the connection is initialized or not
-            if (_conn == null)
+            using (textWriter = new StreamWriter(_exportInfo.FileName, false, utf8WithoutBOM))
             {
-                throw new Exception("Connection has disposed. Set ExportSettings.AutoCloseConnection to false if you want to reuse this instance.");
-            }
+                cancelProcess = false;
 
-            // If the connection is not opened, open it.
-            if (_conn.State != ConnectionState.Open)
-                _conn.Open();
+                InitializeInternalComponent();
 
-            // Check if any database is selected to be exported.
-            _cmd.CommandText = "SELECT DATABASE();";
-            if ((_cmd.ExecuteScalar() + "").Length == 0)
-            {
-                throw new Exception("No database is selected or initialized for exporting.");
-            }
-            #endregion
+                exportProgressArg = new ExportProgressArg();
+                exportCompleteArg = new ExportCompleteArg();
+                exportCompleteArg.TimeStart = DateTime.Now;
+                exportCompleteArg.Error = null;
 
-            Dictionary<string, string> _dicTableCustomSql = null;
+                Dictionary<string, long> dicTableName_TotalRows = new Dictionary<string, long>();
 
-            // Current value of max_allowed_packet will store here
-            // This value will be restored at the end of this process
-            string originalMaxAllowedPacket = "";
+                #region Check the connection is initialized or not
 
-            #region Set max_allowed_packet to Maximum (1GB)
-            try
-            {
-                _cmd.CommandText = "SHOW GLOBAL VARIABLES LIKE 'max_allowed_packet';";
-                MySqlDataAdapter da = new MySqlDataAdapter(_cmd);
-                DataTable dtMAP = new DataTable();
-                da.Fill(dtMAP);
-                originalMaxAllowedPacket = dtMAP.Rows[0]["Value"] + "";
-                da = null;
-                dtMAP = null;
-
-                // 1GB, MySQL Maximum Length allowed in single SQL Query.
-                _cmd.CommandText = "SET GLOBAL max_allowed_packet=1*1024*1024*1024;";
-                _cmd.ExecuteNonQuery();
-
-                // Modified max_allowed_packet will only take effect for new connection.
-                // Therefore the connection has to be closed and reopen.
-                _cmd.Connection.Close();
-                _cmd.Connection.Open();
-            }
-            catch
-            {
-                // Purposely do nothing
-                // Error will be trapped if the MySQL User used in this connection
-                // does not has the privilege to modify GLOBAL Variables.
-            }
-            #endregion
-
-            #region Initialize Value for Progress Report
-
-            if (_exportInfo.TableCustomSql == null || _exportInfo.TableCustomSql.Count == 0)
-            {
-                _dicTableCustomSql = new Dictionary<string, string>();
-                foreach (string s in DatabaseInfo.TableNames)
+                if (_conn == null)
                 {
-                    _dicTableCustomSql.Add(s, string.Format("SELECT * FROM `{0}`;", s));
-                }
-            }
-            else
-            {
-                _dicTableCustomSql = _exportInfo.TableCustomSql;
-            }
-
-            exportProgressArg.TotalTables = _dicTableCustomSql.Count;
-
-            // Get & Calculate total of rows
-
-            double tcs = 0;
-            exportProgressArg.TotalRowsInAllTables = 0;
-            foreach (KeyValuePair<string, string> kv in _dicTableCustomSql)
-            {
-                long totalRowsInCurTable = 0;
-
-                if (_exportInfo.CalculateTotalRowsFromDatabase && (_exportInfo.ExportRows || _exportInfo.ExportTableStructure))
-                {
-                    #region Calculate Total Rows in Each Table
-                    string countRowsSql = "";
-                    if (kv.Value.ToUpper().Contains(" WHERE "))
-                    {
-                        int d = kv.Value.ToUpper().IndexOf(" WHERE ", 0);
-                        string aa = kv.Value.Substring(d);
-                        countRowsSql = "SELECT COUNT(*) FROM `" + kv.Key + "`" + aa;
-                    }
-                    else
-                    {
-                        countRowsSql = "SELECT COUNT(*) FROM `" + kv.Key + "`;";
-                    }
-                    _cmd.CommandText = countRowsSql;
-                    totalRowsInCurTable = Convert.ToInt64(_cmd.ExecuteScalar());
-                    #endregion
+                    throw new Exception(
+                        "Connection has disposed. Set ExportSettings.AutoCloseConnection to false if you want to reuse this instance.");
                 }
 
-                dicTableName_TotalRows[kv.Key] = totalRowsInCurTable;
+                // If the connection is not opened, open it.
+                if (_conn.State != ConnectionState.Open) _conn.Open();
 
-                exportProgressArg.TotalRowsInAllTables += dicTableName_TotalRows[kv.Key];
-
-                tcs += 1;
-                if (ExportProgressChanged != null)
+                // Check if any database is selected to be exported.
+                _cmd.CommandText = "SELECT DATABASE();";
+                if ((_cmd.ExecuteScalar() + "").Length == 0)
                 {
-                    exportProgressArg.PercentageGetTotalRowsCompleted = (int)(tcs / (double)_dicTableCustomSql.Count * (double)100);
-                    ExportProgressChanged(this, exportProgressArg);
-                }
-            }
-            #endregion
-
-            #region Document Header
-
-            textWriter.WriteLine(Encrypt("-- MySqlBackup.NET dump " + MySqlBackup.Version));
-            if (_exportInfo.RecordDumpTime)
-                textWriter.WriteLine(Encrypt("-- Dump time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
-            else
-                textWriter.WriteLine(Encrypt("--"));
-            textWriter.WriteLine(Encrypt("-- ------------------------------------------------------"));
-            textWriter.WriteLine(Encrypt("-- Server version	" + DatabaseInfo.ServerVersion));
-            textWriter.WriteLine(Encrypt(""));
-            textWriter.WriteLine(Encrypt(""));
-            textWriter.WriteLine(Encrypt("/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET NAMES " + DatabaseInfo.DefaultDatabaseCharSet + " */;"));
-            textWriter.WriteLine(Encrypt("/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;"));
-            textWriter.WriteLine(Encrypt("/*!40103 SET TIME_ZONE='+00:00' */;"));
-            textWriter.WriteLine(Encrypt("/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;"));
-            textWriter.WriteLine(Encrypt("/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;"));
-            textWriter.WriteLine(Encrypt("/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;"));
-
-            if (_exportInfo.AddCreateDatabase)
-            {
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt("--"));
-                textWriter.WriteLine(Encrypt("-- Create schema " + DatabaseInfo.DatabaseName));
-                textWriter.WriteLine(Encrypt("--"));
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt(DatabaseInfo.CreateDatabaseSql));
-                textWriter.WriteLine(Encrypt("USE " + DatabaseInfo.DatabaseName + ";"));
-            }
-
-            textWriter.Flush();
-            #endregion
-
-            foreach (KeyValuePair<string, string> kv in _dicTableCustomSql)
-            {
-                #region Reset Values for Progress Report of Current Table
-                if (!ExportInfo.ExportRows && !ExportInfo.ExportTableStructure)
-                {
-                    if (ExportProgressChanged != null)
-                    {
-                        exportProgressArg.TotalTables = 0;
-                        exportProgressArg.TotalRowsInCurrentTable = 0;
-                        exportProgressArg.CurrentTableIndex = 0;
-                        exportProgressArg.CurrentRowInCurrentTable = 0;
-                        exportProgressArg.PercentageCompleted = 100;
-                        ExportProgressChanged(this, exportProgressArg);
-                    }
-                    break;
+                    throw new Exception("No database is selected or initialized for exporting.");
                 }
 
-                if (cancelProcess)
-                {
-                    exportCompleteArg.CompletedType = ExportCompleteArg.CompleteType.Cancelled;
-                    return;
-                }
-
-                exportProgressArg.CurrentTableName = kv.Key;
-
-                if (ExportProgressChanged != null)
-                {
-                    //exportProgressArg.TotalRowsInCurrentTable = DatabaseInfo.Tables[exportProgressArg.CurrentTableName].TotalRows;
-                    if (dicTableName_TotalRows.ContainsKey(kv.Key))
-                        exportProgressArg.TotalRowsInCurrentTable = dicTableName_TotalRows[kv.Key];
-                    exportProgressArg.CurrentTableIndex += 1;
-                    exportProgressArg.CurrentRowInCurrentTable = 0;
-                    exportProgressArg.PercentageCompleted = (int)((double)exportProgressArg.CurrentTableIndex / (double)exportProgressArg.TotalTables * (double)100);
-                    ExportProgressChanged(this, exportProgressArg);
-                }
                 #endregion
 
-                #region Table Header
+                Dictionary<string, string> _dicTableCustomSql = null;
 
-                if (_exportInfo.ExportTableStructure)
+                // Current value of max_allowed_packet will store here
+                // This value will be restored at the end of this process
+                string originalMaxAllowedPacket = "";
+
+                #region Set max_allowed_packet to Maximum (1GB)
+
+                try
                 {
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt("--"));
-                    textWriter.WriteLine(Encrypt("-- Definition of table `" + exportProgressArg.CurrentTableName + "`"));
-                    textWriter.WriteLine(Encrypt("--"));
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt("DROP TABLE IF EXISTS `" + exportProgressArg.CurrentTableName + "`;"));
-                    textWriter.WriteLine(Encrypt(DatabaseInfo.Tables[exportProgressArg.CurrentTableName].CreateTableSql));
-                    if (_exportInfo.ResetAutoIncrement)
-                        textWriter.WriteLine(Encrypt("ALTER TABLE `" + exportProgressArg.CurrentTableName + "` AUTO_INCREMENT = 1;"));
+                    _cmd.CommandText = "SHOW GLOBAL VARIABLES LIKE 'max_allowed_packet';";
+                    MySqlDataAdapter da = new MySqlDataAdapter(_cmd);
+                    DataTable dtMAP = new DataTable();
+                    da.Fill(dtMAP);
+                    originalMaxAllowedPacket = dtMAP.Rows[0]["Value"] + "";
+                    da = null;
+                    dtMAP = null;
+
+                    // 1GB, MySQL Maximum Length allowed in single SQL Query.
+                    _cmd.CommandText = "SET GLOBAL max_allowed_packet=1*1024*1024*1024;";
+                    _cmd.ExecuteNonQuery();
+
+                    // Modified max_allowed_packet will only take effect for new connection.
+                    // Therefore the connection has to be closed and reopen.
+                    _cmd.Connection.Close();
+                    _cmd.Connection.Open();
+                }
+                catch
+                {
+                    // Purposely do nothing
+                    // Error will be trapped if the MySQL User used in this connection
+                    // does not has the privilege to modify GLOBAL Variables.
                 }
 
-                if (_exportInfo.ExportRows)
-                {
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt("--"));
-                    textWriter.WriteLine(Encrypt("-- Dumping data for table `" + exportProgressArg.CurrentTableName + "`"));
-                    textWriter.WriteLine(Encrypt("--"));
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt("/*!40000 ALTER TABLE `" + exportProgressArg.CurrentTableName + "` DISABLE KEYS */;"));
-                }
-                textWriter.Flush();
                 #endregion
 
-                if (_exportInfo.ExportRows)
+                #region Initialize Value for Progress Report
+
+                if (_exportInfo.TableCustomSql == null || _exportInfo.TableCustomSql.Count == 0)
                 {
-                    #region Export Rows
-
-                    string InsertStatementHeader = null;
-
-                    _cmd.CommandText = _dicTableCustomSql[exportProgressArg.CurrentTableName];
-
-                    MySqlDataReader rdr = _cmd.ExecuteReader();
-
-                    StringBuilder sb = new StringBuilder();
-
-                    while (rdr.Read())
+                    _dicTableCustomSql = new Dictionary<string, string>();
+                    foreach (string s in DatabaseInfo.TableNames)
                     {
-                        // Cancel the export process
-                        if (cancelProcess)
-                        {
-                            exportCompleteArg.CompletedType = ExportCompleteArg.CompleteType.Cancelled;
-                            return;
-                        }
+                        _dicTableCustomSql.Add(s, string.Format("SELECT * FROM `{0}`;", s));
+                    }
+                }
+                else
+                {
+                    _dicTableCustomSql = _exportInfo.TableCustomSql;
+                }
 
-                        // Raise the ProgressChanged Event
-                        if (ExportProgressChanged != null)
-                        {
-                            exportProgressArg.CurrentRowInCurrentTable += 1;
-                            exportProgressArg.CurrentRowInAllTable += 1;
-                            ExportProgressChanged(this, exportProgressArg);
-                        }
+                exportProgressArg.TotalTables = _dicTableCustomSql.Count;
 
-                        if (InsertStatementHeader == null)
-                        {
-                            int fc = rdr.FieldCount;
-                            string[] ColumnNames = new string[fc];
-                            for (int ci = 0; ci < rdr.FieldCount; ci++)
-                            {
-                                ColumnNames[ci] = rdr.GetName(ci);
-                            }
-                            InsertStatementHeader = GetInsertStatementHeader(exportProgressArg.CurrentTableName, ColumnNames);
-                        }
+                // Get & Calculate total of rows
 
-                        string ValueString = GetSqlValueString(rdr);
+                double tcs = 0;
+                exportProgressArg.TotalRowsInAllTables = 0;
+                foreach (KeyValuePair<string, string> kv in _dicTableCustomSql)
+                {
+                    long totalRowsInCurTable = 0;
 
-                        if (sb.Length == 0)
+                    if (_exportInfo.CalculateTotalRowsFromDatabase
+                        && (_exportInfo.ExportRows || _exportInfo.ExportTableStructure))
+                    {
+                        #region Calculate Total Rows in Each Table
+
+                        string countRowsSql = "";
+                        if (kv.Value.ToUpper().Contains(" WHERE "))
                         {
-                            sb.Append(InsertStatementHeader);
-                            sb.Append("\r\n");
-                            sb.Append(ValueString);
-                        }
-                        else if (((long)sb.Length + (long)ValueString.Length) < _exportInfo.MaxSqlLength)
-                        {
-                            sb.Append(",\r\n");
-                            sb.Append(ValueString);
+                            int d = kv.Value.ToUpper().IndexOf(" WHERE ", 0);
+                            string aa = kv.Value.Substring(d);
+                            countRowsSql = "SELECT COUNT(*) FROM `" + kv.Key + "`" + aa;
                         }
                         else
                         {
+                            countRowsSql = "SELECT COUNT(*) FROM `" + kv.Key + "`;";
+                        }
+                        _cmd.CommandText = countRowsSql;
+                        totalRowsInCurTable = Convert.ToInt64(_cmd.ExecuteScalar());
+
+                        #endregion
+                    }
+
+                    dicTableName_TotalRows[kv.Key] = totalRowsInCurTable;
+
+                    exportProgressArg.TotalRowsInAllTables += dicTableName_TotalRows[kv.Key];
+
+                    tcs += 1;
+                    if (ExportProgressChanged != null)
+                    {
+                        exportProgressArg.PercentageGetTotalRowsCompleted =
+                            (int)(tcs / (double)_dicTableCustomSql.Count * (double)100);
+                        ExportProgressChanged(this, exportProgressArg);
+                    }
+                }
+
+                #endregion
+
+                #region Document Header
+
+                textWriter.WriteLine(Encrypt("-- MySqlBackup.NET dump " + MySqlBackup.Version));
+                if (_exportInfo.RecordDumpTime) textWriter.WriteLine(Encrypt("-- Dump time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
+                else textWriter.WriteLine(Encrypt("--"));
+                textWriter.WriteLine(Encrypt("-- ------------------------------------------------------"));
+                textWriter.WriteLine(Encrypt("-- Server version	" + DatabaseInfo.ServerVersion));
+                textWriter.WriteLine(Encrypt(""));
+                textWriter.WriteLine(Encrypt(""));
+                textWriter.WriteLine(Encrypt("/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;"));
+                textWriter.WriteLine(Encrypt("/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;"));
+                textWriter.WriteLine(Encrypt("/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;"));
+                textWriter.WriteLine(Encrypt("/*!40101 SET NAMES " + DatabaseInfo.DefaultDatabaseCharSet + " */;"));
+                textWriter.WriteLine(Encrypt("/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;"));
+                textWriter.WriteLine(Encrypt("/*!40103 SET TIME_ZONE='+00:00' */;"));
+                textWriter.WriteLine(Encrypt("/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;"));
+                textWriter.WriteLine(
+                    Encrypt("/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;"));
+                textWriter.WriteLine(
+                    Encrypt("/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;"));
+                textWriter.WriteLine(Encrypt("/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;"));
+
+                if (_exportInfo.AddCreateDatabase)
+                {
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt("--"));
+                    textWriter.WriteLine(Encrypt("-- Create schema " + DatabaseInfo.DatabaseName));
+                    textWriter.WriteLine(Encrypt("--"));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt(DatabaseInfo.CreateDatabaseSql));
+                    textWriter.WriteLine(Encrypt("USE " + DatabaseInfo.DatabaseName + ";"));
+                }
+
+                textWriter.Flush();
+
+                #endregion
+
+                foreach (KeyValuePair<string, string> kv in _dicTableCustomSql)
+                {
+                    #region Reset Values for Progress Report of Current Table
+
+                    if (!ExportInfo.ExportRows && !ExportInfo.ExportTableStructure)
+                    {
+                        if (ExportProgressChanged != null)
+                        {
+                            exportProgressArg.TotalTables = 0;
+                            exportProgressArg.TotalRowsInCurrentTable = 0;
+                            exportProgressArg.CurrentTableIndex = 0;
+                            exportProgressArg.CurrentRowInCurrentTable = 0;
+                            exportProgressArg.PercentageCompleted = 100;
+                            ExportProgressChanged(this, exportProgressArg);
+                        }
+                        break;
+                    }
+
+                    if (cancelProcess)
+                    {
+                        exportCompleteArg.CompletedType = ExportCompleteArg.CompleteType.Cancelled;
+                        return;
+                    }
+
+                    exportProgressArg.CurrentTableName = kv.Key;
+
+                    if (ExportProgressChanged != null)
+                    {
+                        //exportProgressArg.TotalRowsInCurrentTable = DatabaseInfo.Tables[exportProgressArg.CurrentTableName].TotalRows;
+                        if (dicTableName_TotalRows.ContainsKey(kv.Key)) exportProgressArg.TotalRowsInCurrentTable = dicTableName_TotalRows[kv.Key];
+                        exportProgressArg.CurrentTableIndex += 1;
+                        exportProgressArg.CurrentRowInCurrentTable = 0;
+                        exportProgressArg.PercentageCompleted =
+                            (int)
+                            ((double)exportProgressArg.CurrentTableIndex / (double)exportProgressArg.TotalTables
+                             * (double)100);
+                        ExportProgressChanged(this, exportProgressArg);
+                    }
+
+                    #endregion
+
+                    #region Table Header
+
+                    if (_exportInfo.ExportTableStructure)
+                    {
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt("--"));
+                        textWriter.WriteLine(
+                            Encrypt("-- Definition of table `" + exportProgressArg.CurrentTableName + "`"));
+                        textWriter.WriteLine(Encrypt("--"));
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(
+                            Encrypt("DROP TABLE IF EXISTS `" + exportProgressArg.CurrentTableName + "`;"));
+                        textWriter.WriteLine(
+                            Encrypt(DatabaseInfo.Tables[exportProgressArg.CurrentTableName].CreateTableSql));
+                        if (_exportInfo.ResetAutoIncrement)
+                            textWriter.WriteLine(
+                                Encrypt("ALTER TABLE `" + exportProgressArg.CurrentTableName + "` AUTO_INCREMENT = 1;"));
+                    }
+
+                    if (_exportInfo.ExportRows)
+                    {
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt("--"));
+                        textWriter.WriteLine(
+                            Encrypt("-- Dumping data for table `" + exportProgressArg.CurrentTableName + "`"));
+                        textWriter.WriteLine(Encrypt("--"));
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(
+                            Encrypt(
+                                "/*!40000 ALTER TABLE `" + exportProgressArg.CurrentTableName + "` DISABLE KEYS */;"));
+                    }
+                    textWriter.Flush();
+
+                    #endregion
+
+                    if (_exportInfo.ExportRows)
+                    {
+                        #region Export Rows
+
+                        string InsertStatementHeader = null;
+
+                        _cmd.CommandText = _dicTableCustomSql[exportProgressArg.CurrentTableName];
+
+                        MySqlDataReader rdr = _cmd.ExecuteReader();
+
+                        StringBuilder sb = new StringBuilder();
+
+                        while (rdr.Read())
+                        {
+                            // Cancel the export process
+                            if (cancelProcess)
+                            {
+                                exportCompleteArg.CompletedType = ExportCompleteArg.CompleteType.Cancelled;
+                                return;
+                            }
+
+                            // Raise the ProgressChanged Event
+                            if (ExportProgressChanged != null)
+                            {
+                                exportProgressArg.CurrentRowInCurrentTable += 1;
+                                exportProgressArg.CurrentRowInAllTable += 1;
+                                ExportProgressChanged(this, exportProgressArg);
+                            }
+
+                            if (InsertStatementHeader == null)
+                            {
+                                int fc = rdr.FieldCount;
+                                string[] ColumnNames = new string[fc];
+                                for (int ci = 0; ci < rdr.FieldCount; ci++)
+                                {
+                                    ColumnNames[ci] = rdr.GetName(ci);
+                                }
+                                InsertStatementHeader = GetInsertStatementHeader(
+                                    exportProgressArg.CurrentTableName, ColumnNames);
+                            }
+
+                            string ValueString = GetSqlValueString(rdr);
+
+                            if (sb.Length == 0)
+                            {
+                                sb.Append(InsertStatementHeader);
+                                sb.Append("\r\n");
+                                sb.Append(ValueString);
+                            }
+                            else if (((long)sb.Length + (long)ValueString.Length) < _exportInfo.MaxSqlLength)
+                            {
+                                sb.Append(",\r\n");
+                                sb.Append(ValueString);
+                            }
+                            else
+                            {
+                                sb.Append(";");
+
+                                string readyText = Encrypt(sb.ToString());
+
+                                textWriter.WriteLine(readyText);
+                                textWriter.Flush();
+
+                                sb = new StringBuilder();
+                                sb.Append(InsertStatementHeader);
+                                sb.Append("\r\n");
+                                sb.Append(ValueString);
+                            }
+
+                        }
+                        rdr.Close();
+
+                        if (sb.Length > 0)
+                        {
                             sb.Append(";");
-
-                            string readyText = Encrypt(sb.ToString());
-
-                            textWriter.WriteLine(readyText);
-                            textWriter.Flush();
-
-                            sb = new StringBuilder();
-                            sb.Append(InsertStatementHeader);
-                            sb.Append("\r\n");
-                            sb.Append(ValueString);
                         }
 
-                    }
-                    rdr.Close();
+                        textWriter.WriteLine(Encrypt(sb.ToString()));
+                        textWriter.Flush();
 
-                    if (sb.Length > 0)
+                        #endregion
+                    }
+
+                    #region Table Footer
+
+                    if (_exportInfo.ExportRows)
                     {
-                        sb.Append(";");
+                        textWriter.WriteLine(
+                            Encrypt("/*!40000 ALTER TABLE `" + exportProgressArg.CurrentTableName + "` ENABLE KEYS */;"));
+                        textWriter.Flush();
                     }
 
-                    textWriter.WriteLine(Encrypt(sb.ToString()));
-                    textWriter.Flush();
                     #endregion
                 }
 
-                #region Table Footer
+                #region Export Function
 
-                if (_exportInfo.ExportRows)
+                if (_exportInfo.ExportFunctions && DatabaseInfo.StoredFunction.Count != 0)
                 {
-                    textWriter.WriteLine(Encrypt("/*!40000 ALTER TABLE `" + exportProgressArg.CurrentTableName + "` ENABLE KEYS */;"));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt("--"));
+                    textWriter.WriteLine(Encrypt("-- Dumping functions"));
+                    textWriter.WriteLine(Encrypt("--"));
+
+                    foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredFunction)
+                    {
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt(string.Format("DROP FUNCTION IF EXISTS `{0}`;", kv.Key)));
+                        textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
+                        textWriter.WriteLine(Encrypt(kv.Value));
+                        textWriter.WriteLine(Encrypt(_delimeter));
+                        textWriter.WriteLine(Encrypt("DELIMITER ;"));
+                        textWriter.WriteLine(Encrypt(""));
+                    }
+
                     textWriter.Flush();
+                }
+
+                #endregion
+
+                #region Export Stored Procedure
+
+                if (_exportInfo.ExportStoredProcedures && DatabaseInfo.StoredProcedure.Count != 0)
+                {
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt("--"));
+                    textWriter.WriteLine(Encrypt("-- Dumping stored procedures"));
+                    textWriter.WriteLine(Encrypt("--"));
+
+                    foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredProcedure)
+                    {
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt(string.Format("DROP PROCEDURE IF EXISTS `{0}`;", kv.Key)));
+                        textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
+                        textWriter.WriteLine(Encrypt(kv.Value));
+                        textWriter.WriteLine(Encrypt(_delimeter));
+                        textWriter.WriteLine(Encrypt("DELIMITER ;"));
+                        textWriter.WriteLine(Encrypt(""));
+                    }
+                    textWriter.Flush();
+                }
+
+                #endregion
+
+                #region Export Events
+
+                if (_exportInfo.ExportEvents && DatabaseInfo.StoredEvents.Count != 0)
+                {
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt("--"));
+                    textWriter.WriteLine(Encrypt("-- Dumping events"));
+                    textWriter.WriteLine(Encrypt("--"));
+
+                    foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredEvents)
+                    {
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt(string.Format("DROP EVENT IF EXISTS `{0}`;", kv.Key)));
+                        textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
+                        textWriter.WriteLine(Encrypt(kv.Value));
+                        textWriter.WriteLine(Encrypt(_delimeter));
+                        textWriter.WriteLine(Encrypt("DELIMITER ;"));
+                        textWriter.WriteLine(Encrypt(""));
+                    }
+
+                    textWriter.WriteLine(Encrypt("SET GLOBAL event_scheduler = ON;"));
+                    textWriter.Flush();
+                }
+
+                #endregion
+
+                #region Export View
+
+                if (_exportInfo.ExportViews && DatabaseInfo.StoredView.Count != 0)
+                {
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt("--"));
+                    textWriter.WriteLine(Encrypt("-- Dumping views"));
+                    textWriter.WriteLine(Encrypt("--"));
+
+                    foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredView)
+                    {
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt(string.Format("DROP VIEW IF EXISTS `{0}`;", kv.Key)));
+                        textWriter.WriteLine(Encrypt(kv.Value));
+                        textWriter.WriteLine(Encrypt(""));
+                    }
+
+                    textWriter.Flush();
+                }
+
+                #endregion
+
+                #region Export Trigger
+
+                if (_exportInfo.ExportTriggers && DatabaseInfo.StoredTrigger.Count != 0)
+                {
+
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt(""));
+                    textWriter.WriteLine(Encrypt("--"));
+                    textWriter.WriteLine(Encrypt("-- Dumping triggers"));
+                    textWriter.WriteLine(Encrypt("--"));
+
+                    foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredTrigger)
+                    {
+                        textWriter.WriteLine(Encrypt(""));
+                        textWriter.WriteLine(Encrypt(string.Format("DROP TRIGGER IF EXISTS `{0}`;", kv.Key)));
+                        textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
+                        textWriter.WriteLine(Encrypt(kv.Value));
+                        textWriter.WriteLine(Encrypt(_delimeter));
+                        textWriter.WriteLine(Encrypt("DELIMITER ;"));
+                        textWriter.WriteLine(Encrypt(""));
+                    }
+
+                    textWriter.Flush();
+                }
+
+                #endregion
+
+                #region Document Footer
+
+                textWriter.WriteLine(Encrypt(""));
+                textWriter.WriteLine(Encrypt(""));
+                textWriter.WriteLine(Encrypt("/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;"));
+                textWriter.WriteLine(Encrypt("/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;"));
+                textWriter.WriteLine(Encrypt("/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;"));
+                textWriter.WriteLine(Encrypt("/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;"));
+                textWriter.WriteLine(Encrypt("/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;"));
+                textWriter.WriteLine(Encrypt("/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;"));
+                textWriter.WriteLine(Encrypt("/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;"));
+                textWriter.WriteLine(Encrypt("/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;"));
+
+
+
+
+                textWriter.Flush();
+
+                #region Reset max_allowed_packet to original value
+                try
+                {
+                    _cmd.CommandText = "SET GLOBAL max_allowed_packet = " + originalMaxAllowedPacket + ";";
+                    _cmd.ExecuteNonQuery();
+                }
+                catch
+                {
+                    // Purposely do nothing.
+                    // Error will be trapped if the user does not has the privilege
+                    // to modify GLOBAL variables.
                 }
                 #endregion
             }
 
-            #region Export Function
-            if (_exportInfo.ExportFunctions && DatabaseInfo.StoredFunction.Count != 0)
-            {
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt("--"));
-                textWriter.WriteLine(Encrypt("-- Dumping functions"));
-                textWriter.WriteLine(Encrypt("--"));
-
-                foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredFunction)
-                {
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt(string.Format("DROP FUNCTION IF EXISTS `{0}`;", kv.Key)));
-                    textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
-                    textWriter.WriteLine(Encrypt(kv.Value));
-                    textWriter.WriteLine(Encrypt(_delimeter));
-                    textWriter.WriteLine(Encrypt("DELIMITER ;"));
-                    textWriter.WriteLine(Encrypt(""));
-                }
-
-                textWriter.Flush();
-            }
             #endregion
 
-            #region Export Stored Procedure
-            if (_exportInfo.ExportStoredProcedures && DatabaseInfo.StoredProcedure.Count != 0)
-            {
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt("--"));
-                textWriter.WriteLine(Encrypt("-- Dumping stored procedures"));
-                textWriter.WriteLine(Encrypt("--"));
 
-                foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredProcedure)
-                {
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt(string.Format("DROP PROCEDURE IF EXISTS `{0}`;", kv.Key)));
-                    textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
-                    textWriter.WriteLine(Encrypt(kv.Value));
-                    textWriter.WriteLine(Encrypt(_delimeter));
-                    textWriter.WriteLine(Encrypt("DELIMITER ;"));
-                    textWriter.WriteLine(Encrypt(""));
-                }
-                textWriter.Flush();
-            }
-            #endregion
-
-            #region Export Events
-            if (_exportInfo.ExportEvents && DatabaseInfo.StoredEvents.Count != 0)
-            {
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt("--"));
-                textWriter.WriteLine(Encrypt("-- Dumping events"));
-                textWriter.WriteLine(Encrypt("--"));
-
-                foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredEvents)
-                {
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt(string.Format("DROP EVENT IF EXISTS `{0}`;", kv.Key)));
-                    textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
-                    textWriter.WriteLine(Encrypt(kv.Value));
-                    textWriter.WriteLine(Encrypt(_delimeter));
-                    textWriter.WriteLine(Encrypt("DELIMITER ;"));
-                    textWriter.WriteLine(Encrypt(""));
-                }
-
-                textWriter.WriteLine(Encrypt("SET GLOBAL event_scheduler = ON;"));
-                textWriter.Flush();
-            }
-            #endregion
-
-            #region Export View
-            if (_exportInfo.ExportViews && DatabaseInfo.StoredView.Count != 0)
-            {
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt("--"));
-                textWriter.WriteLine(Encrypt("-- Dumping views"));
-                textWriter.WriteLine(Encrypt("--"));
-
-                foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredView)
-                {
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt(string.Format("DROP VIEW IF EXISTS `{0}`;", kv.Key)));
-                    textWriter.WriteLine(Encrypt(kv.Value));
-                    textWriter.WriteLine(Encrypt(""));
-                }
-
-                textWriter.Flush();
-            }
-            #endregion
-
-            #region Export Trigger
-            if (_exportInfo.ExportTriggers && DatabaseInfo.StoredTrigger.Count != 0)
-            {
-
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt(""));
-                textWriter.WriteLine(Encrypt("--"));
-                textWriter.WriteLine(Encrypt("-- Dumping triggers"));
-                textWriter.WriteLine(Encrypt("--"));
-
-                foreach (KeyValuePair<string, string> kv in DatabaseInfo.StoredTrigger)
-                {
-                    textWriter.WriteLine(Encrypt(""));
-                    textWriter.WriteLine(Encrypt(string.Format("DROP TRIGGER IF EXISTS `{0}`;", kv.Key)));
-                    textWriter.WriteLine(Encrypt("DELIMITER " + _delimeter));
-                    textWriter.WriteLine(Encrypt(kv.Value));
-                    textWriter.WriteLine(Encrypt(_delimeter));
-                    textWriter.WriteLine(Encrypt("DELIMITER ;"));
-                    textWriter.WriteLine(Encrypt(""));
-                }
-
-                textWriter.Flush();
-            }
-            #endregion
-
-            #region Document Footer
-
-            textWriter.WriteLine(Encrypt(""));
-            textWriter.WriteLine(Encrypt(""));
-            textWriter.WriteLine(Encrypt("/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;"));
-            textWriter.WriteLine(Encrypt("/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;"));
-            textWriter.WriteLine(Encrypt("/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;"));
-            textWriter.WriteLine(Encrypt("/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;"));
-            textWriter.WriteLine(Encrypt("/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;"));
-
-            textWriter.Flush();
-            #endregion
-
-            #region Reset max_allowed_packet to original value
-            try
-            {
-                _cmd.CommandText = "SET GLOBAL max_allowed_packet = " + originalMaxAllowedPacket + ";";
-                _cmd.ExecuteNonQuery();
-            }
-            catch
-            {
-                // Purposely do nothing.
-                // Error will be trapped if the user does not has the privilege
-                // to modify GLOBAL variables.
-            }
-            #endregion
 
             #region Zip Output File
-            if (ExportInfo.ZipOutputFile)
+
+            if (ExportInfo.CompressionType != CompressionType.Off)
             {
-                using (ZipFile zip = new ZipFile())
+
+                
+
+                switch (ExportInfo.CompressionType)
                 {
-                    zip.CompressionLevel = Ionic.Zlib.CompressionLevel.BestCompression;
-                    string newZipFile = Path.GetDirectoryName(ExportInfo.FileName) + "\\" + Path.GetFileNameWithoutExtension(ExportInfo.FileName) + ".zip";
-                    zip.AddFile(ExportInfo.FileName);
-                    zip.Save(newZipFile);
-                    ExportInfo.FileName = newZipFile;
+                    case CompressionType.ZipFile:
+                        GenerateZipFile();
+                        break;
+                    case CompressionType.SevenZip:
+                        GenerateSevenZipFile();
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException();
+                        
                 }
             }
+
+
+
             #endregion
 
             exportCompleteArg.CompletedType = ExportCompleteArg.CompleteType.Completed;
+        }
+
+        private void GenerateSevenZipFile()
+        {
+            string location;
+            using (var subkey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"))
+            {
+
+                var sevenZipKey = subkey.GetSubKeyNames().FirstOrDefault(f => f.Contains("7z"));
+                if (string.IsNullOrEmpty(sevenZipKey))
+                {
+                    throw new InvalidOperationException("Unable to find 7-Zip installation location");
+                }
+
+                using (var sevenKey = subkey.OpenSubKey(sevenZipKey))
+                {
+                    try
+                    {
+                        location = sevenKey.GetValue("Path").ToString();
+                    }
+                    catch (Exception)
+                    {
+                        throw new Exception("Unable to get path of 7-zip location.");
+                    }
+                }
+
+            }
+
+            string fullPathToZip = Path.Combine(location, "7z.exe");
+
+            if (!File.Exists(fullPathToZip))
+            {
+                throw new InvalidOperationException(string.Format("Found 7Zip path as: {0}, but it doesn't exist!", fullPathToZip));
+            }
+            string newFileName = Path.GetFileNameWithoutExtension(ExportInfo.FileName);
+
+            newFileName = newFileName + ".7z";
+
+            string destinationFile = Path.Combine(SystemDrivePath, newFileName);
+            string sourceFile = Path.Combine(Environment.CurrentDirectory, ExportInfo.FileName);
+
+            using (var process = new Process())
+            {
+                process.StartInfo.FileName = fullPathToZip;
+                process.StartInfo.Arguments = string.Format("a {0} {1}", destinationFile, sourceFile);
+                process.Start();
+            }
+
+            ExportInfo.FileName = newFileName;
+
+        }
+
+        public string SystemDrivePath
+        {
+            get
+            {
+                return Path.GetPathRoot(Environment.SystemDirectory);
+            }
+        }
+
+        private void GenerateZipFile()
+        {
+            using (ZipFile zip = new ZipFile())
+            {
+                zip.CompressionLevel = Ionic.Zlib.CompressionLevel.BestCompression;
+                string newZipFileName = Path.GetFileNameWithoutExtension(ExportInfo.FileName) + ".zip";
+
+                string destionationFileName = Path.Combine(SystemDrivePath, newZipFileName);
+                
+                zip.AddFile(ExportInfo.FileName);
+                zip.Save(destionationFileName);
+                ExportInfo.FileName = destionationFileName;
+            }
         }
 
         /// <summary>
@@ -1449,11 +1584,16 @@ namespace MySql.Data.MySqlClient
             if (_exportInfo.EnableEncryption)
             {
                 if (input == null || input.Length == 0)
-                    return methods.EncryptWithSalt("-- ||||" + methods.RandomString(methods.random.Next(100, 500)), _exportInfo.EncryptionKey, _exportInfo.SaltSize);
+                    return methods.EncryptWithSalt(
+                        "-- ||||" + methods.RandomString(methods.random.Next(100, 500)),
+                        _exportInfo.EncryptionKey,
+                        _exportInfo.SaltSize);
                 return methods.EncryptWithSalt(input, _exportInfo.EncryptionKey, _exportInfo.SaltSize);
             }
             else
+            {
                 return input;
+            }
         }
 
         private string Decrypt(string input)
@@ -1687,9 +1827,14 @@ namespace MySql.Data.MySqlClient
         public void Dispose(bool disposeConnection)
         {
             if (textReader != null)
+            {
                 textReader.Close();
+            }
+
             if (textWriter != null)
+            {
                 textWriter.Close();
+            }
 
             methods = null;
             textReader = null;

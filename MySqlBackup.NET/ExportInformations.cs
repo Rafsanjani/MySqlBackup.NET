@@ -1,9 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace MySql.Data.MySqlClient
+﻿namespace MySql.Data.MySqlClient
 {
+    using System;
+    using System.Collections.Generic;
+    using System.Text;
+    using Compression;
+
+
     /// <summary>
     /// Informations and Settings of MySQL Database Export Process
     /// </summary>
@@ -184,9 +186,9 @@ namespace MySql.Data.MySqlClient
         public bool ExportEvents = true;
 
         /// <summary>
-        /// Gets or Sets a value indicates whether the output file should be compressed as zip file.
+        /// Gets or Sets a value indicates whether the output file should be compressed in some way.
         /// </summary>
-        public bool ZipOutputFile = false;
+        public CompressionType CompressionType { get; set; }
 
         public ExportCompleteArg CompleteArg = null;
 
