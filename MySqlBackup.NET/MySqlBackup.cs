@@ -896,7 +896,7 @@
                 {
                     #region Reset Values for Progress Report of Current Table
 
-                    if (!ExportInfo.ExportRows && !ExportInfo.ExportTableStructure)
+                    if (!_exportInfo.ExportRows && !_exportInfo.ExportTableStructure)
                     {
                         if (ExportProgressChanged != null)
                         {
@@ -1229,15 +1229,15 @@
 
             #region Compression
 
-            if (ExportInfo.CompressionType != CompressionType.Off)
+            if (_exportInfo.CompressionType != CompressionType.Off)
             {
-                switch (ExportInfo.CompressionType)
+                switch (_exportInfo.CompressionType)
                 {
                     case CompressionType.ZipFile:
-                        GenerateZipFile();
+                        GenerateZipFile(_exportInfo);
                         break;
                     case CompressionType.SevenZip:
-                        GenerateSevenZipFile();
+                        GenerateSevenZipFile(_exportInfo);
                         break;
                     default:
                         throw new ArgumentOutOfRangeException();
@@ -1249,7 +1249,7 @@
             exportCompleteArg.CompletedType = ExportCompleteArg.CompleteType.Completed;
         }
 
-        private void GenerateSevenZipFile()
+        private void GenerateSevenZipFile(ExportInformation exportInformation)
         {
             string location;
             using (
@@ -1282,7 +1282,7 @@
                 throw new InvalidOperationException(
                     string.Format("Found 7Zip path as: {0}, but it doesn't exist!", fullPathToZip));
             }
-            string newFileName = Path.GetFileNameWithoutExtension(ExportInfo.FileName);
+            string newFileName = Path.GetFileNameWithoutExtension(exportInformation.FileName);
 
             newFileName = newFileName + ".7z";
 
@@ -1299,12 +1299,12 @@
             ExportInfo.FileName = newFileName;
         }
 
-        private void GenerateZipFile()
+        private void GenerateZipFile(ExportInformation exportInformation)
         {
             using (ZipFile zip = new ZipFile())
             {
                 zip.CompressionLevel = CompressionLevel.BestCompression;
-                string newZipFileName = Path.GetFileNameWithoutExtension(ExportInfo.FileName) + ".zip";
+                string newZipFileName = Path.GetFileNameWithoutExtension(exportInformation.FileName) + ".zip";
 
                 string destionationFileName = Path.Combine(SystemDrivePath, newZipFileName);
 
