@@ -197,28 +197,6 @@
         }
 
         /// <summary>
-        /// Gets or Sets the Informations that define behaviour of Export Process.
-        /// </summary>
-        public ExportInformation ExportInfo
-        {
-            get
-            {
-                return _exportInfo;
-            }
-            set
-            {
-                if (value == null)
-                {
-                    _exportInfo = new ExportInformation();
-                }
-                else
-                {
-                    _exportInfo = value;
-                }
-            }
-        }
-
-        /// <summary>
         /// Gets or Sets the Informations that define behaviour of Import Process.
         /// </summary>
         public ImportInformations ImportInfo
@@ -524,7 +502,7 @@
         /// <param name="exportInfo">Sets the Informations that define behaviour of Export Process.</param>
         public void Export(ExportInformation exportInfo)
         {
-            if (_exportInfo.AsynchronousMode)
+            if (exportInfo.AsynchronousMode)
             {
                 var exportBackgroundWorker = new BackgroundWorker();
                 exportBackgroundWorker.DoWork += ExportBackgroundWorkerDoWork;
@@ -689,19 +667,19 @@
                 exportCompleteArg.Error = ex;
                 exportCompleteArg.CompletedType = ExportCompleteArg.CompleteType.Error;
                 exportCompleteArg.TimeEnd = DateTime.Now;
-                _exportInfo.CompleteArg = exportCompleteArg;
-                Dispose(_exportInfo.AutoCloseConnection);
+                exportInformation.CompleteArg = exportCompleteArg;
+                Dispose(exportInformation.AutoCloseConnection);
 
-                if (!_exportInfo.AsynchronousMode)
+                if (!exportInformation.AsynchronousMode)
                 {
                     throw ex;
                 }
             }
 
-            Dispose(_exportInfo.AutoCloseConnection);
+            Dispose(exportInformation.AutoCloseConnection);
 
             exportCompleteArg.TimeEnd = DateTime.Now;
-            _exportInfo.CompleteArg = exportCompleteArg;
+            exportInformation.CompleteArg = exportCompleteArg;
 
             if (ExportProgressChanged != null)
             {
@@ -1287,7 +1265,7 @@
             newFileName = newFileName + ".7z";
 
             string destinationFile = Path.Combine(SystemDrivePath, newFileName);
-            string sourceFile = Path.Combine(Environment.CurrentDirectory, ExportInfo.FileName);
+            string sourceFile = Path.Combine(Environment.CurrentDirectory, exportInformation.FileName);
 
             using (var process = new Process())
             {
@@ -1296,7 +1274,7 @@
                 process.Start();
             }
 
-            ExportInfo.FileName = newFileName;
+            exportInformation.FileName = newFileName;
         }
 
         private void GenerateZipFile(ExportInformation exportInformation)
@@ -1308,9 +1286,9 @@
 
                 string destionationFileName = Path.Combine(SystemDrivePath, newZipFileName);
 
-                zip.AddFile(ExportInfo.FileName);
+                zip.AddFile(exportInformation.FileName);
                 zip.Save(destionationFileName);
-                ExportInfo.FileName = destionationFileName;
+                exportInformation.FileName = destionationFileName;
             }
         }
 

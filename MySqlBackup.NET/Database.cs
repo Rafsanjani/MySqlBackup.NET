@@ -9,6 +9,9 @@ using System.Data;
 
 namespace MySql.Data.MySqlClient
 {
+    using System.Collections;
+    using System.Linq;
+
     public class Database
     {
         private long _totalRows = -1;
@@ -162,15 +165,15 @@ namespace MySql.Data.MySqlClient
             }
 
 
-            string[] vsa = ServerVersionNo.Split('.');
+            IEnumerable<string> vsa = ServerVersionNo.Split('.');
             string v = "";
-            if (vsa.Length > 1)
+            if (vsa.Count() > 1)
             {
-                v = vsa[0] + "." + vsa[1];
+                v = vsa.First() + "." + vsa.ElementAt(1);
             }
             else 
             {
-                v = vsa[0];
+                v = vsa.First();
             }
 
             double.TryParse(v, out _ServerMajorVersion);
@@ -180,8 +183,6 @@ namespace MySql.Data.MySqlClient
             GetTriggers(ref cmd);
             GetViews(ref cmd);
             GetEvents(ref cmd);
-
-            md = null;
         }
 
         private void GetEvents(ref MySqlCommand cmd)
@@ -209,7 +210,7 @@ namespace MySql.Data.MySqlClient
                         string createSql = "";
                         object ob = dtEventCur.Rows[0][3];
 
-                        if (ob is System.String)
+                        if (ob is String)
                         {
                             createSql = ob + "";
                         }
@@ -235,7 +236,7 @@ namespace MySql.Data.MySqlClient
                 // The MySQL User used in this connection is not allowed to access Events
 
                 // Clear and Reset Collection
-                StoredEvents = new Dictionary<string, string>();
+                StoredEvents.Clear();
             }
         }
 
