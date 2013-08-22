@@ -1,4 +1,4 @@
-﻿namespace MySql.Data.MySqlClient
+﻿namespace MySqlBackup
 {
     using System;
     using System.Collections.Generic;

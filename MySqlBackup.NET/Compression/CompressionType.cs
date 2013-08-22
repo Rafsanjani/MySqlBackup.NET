@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace MySql.Data.MySqlClient.Compression
+namespace MySqlBackup.Compression
 {
     public enum CompressionType
     {

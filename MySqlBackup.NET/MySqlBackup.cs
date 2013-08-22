@@ -1,4 +1,4 @@
-﻿namespace MySql.Data.MySqlClient
+﻿namespace MySqlBackup
 {
     // The authors disclaims copyright of this project. Use at your own risk.
     // For bugs report, feature request, discussions, supports, please visit:
@@ -28,8 +28,10 @@
 
     using Microsoft.Win32;
 
-    using MySql.Data.MySqlClient.Compression;
+    using MySql.Data.MySqlClient;
     using MySql.Data.Types;
+
+    using global::MySqlBackup.Compression;
 
     #endregion
 
@@ -505,7 +507,7 @@
             if (exportInfo.AsynchronousMode)
             {
                 var exportBackgroundWorker = new BackgroundWorker();
-                exportBackgroundWorker.DoWork += ExportBackgroundWorkerDoWork;
+                exportBackgroundWorker.DoWork += (sender, args) => ExportExecute(exportInfo);
                 exportBackgroundWorker.RunWorkerAsync();
             }
             else
@@ -672,7 +674,7 @@
 
                 if (!exportInformation.AsynchronousMode)
                 {
-                    throw ex;
+                    throw;
                 }
             }
 
@@ -1935,11 +1937,6 @@
             df = new DateTimeFormatInfo();
             df.DateSeparator = "-";
             df.TimeSeparator = ":";
-        }
-
-        private void ExportBackgroundWorkerDoWork(object sender, DoWorkEventArgs e)
-        {
-            ExportExecute(new ExportInformation());
         }
 
         private void ImportBackgroundWorkerDoWork(object sender, DoWorkEventArgs e)

@@ -10,7 +10,7 @@ using System.Data;
 using MySql.Data.MySqlClient;
 using System.Security.Cryptography;
 
-namespace MySql.Data.MySqlClient
+namespace MySqlBackup
 {
     public class Methods
     {

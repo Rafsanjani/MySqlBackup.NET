@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace MySql.Data.MySqlClient
+namespace MySqlBackup
 {
     /// <summary>
     /// Informations and Settings of MySQL Database Import Process

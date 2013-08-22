@@ -8,7 +8,7 @@
     <ProjectGuid>{9570E657-C154-49D6-9578-D00F483DB1E3}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>MySql.Data.MySqlClient</RootNamespace>
+    <RootNamespace>MySqlBackup</RootNamespace>
     <AssemblyName>MySqlBackup</AssemblyName>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
@@ -39,9 +39,6 @@
     </Reference>
     <Reference Include="MySql.Data">
       <HintPath>..\DLL (Precompile)\MySql.Data.dll</HintPath>
-    </Reference>
-    <Reference Include="MySqlBackup">
-      <HintPath>..\DLL (Precompile)\MySqlBackup.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />

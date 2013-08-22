@@ -2,15 +2,15 @@
 // For bugs report, feature request, discussions, supports, please visit:
 // http://mysqlbackupnet.codeplex.com/
 
-using System;
-using System.Collections.Generic;
-using System.Text;
-using System.Data;
-
-namespace MySql.Data.MySqlClient
+namespace MySqlBackup
 {
-    using System.Collections;
+    using System;
+    using System.Collections.Generic;
+    using System.Text;
+    using System.Data;
     using System.Linq;
+
+    using MySql.Data.MySqlClient;
 
     public class Database
     {

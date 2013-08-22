@@ -7,8 +7,10 @@ using System.Collections.Generic;
 using System.Text;
 using System.Data;
 
-namespace MySql.Data.MySqlClient
+namespace MySqlBackup
 {
+    using MySql.Data.MySqlClient;
+
     public class Table
     {
         private long _totalRows = -1;
