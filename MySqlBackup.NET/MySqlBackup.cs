@@ -1274,6 +1274,9 @@
                 process.StartInfo.FileName = fullPathToZip;
                 process.StartInfo.Arguments = string.Format("a {0} {1}", destinationFile, sourceFile);
                 process.Start();
+                // dispose is supposed to wait, but it's just in my nature to put some defesniveness in
+
+                process.WaitForExit();
             }
 
             exportInformation.FileName = newFileName;
