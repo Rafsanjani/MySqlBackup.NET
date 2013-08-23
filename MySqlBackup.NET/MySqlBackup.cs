@@ -96,6 +96,7 @@
         public MySqlBackup()
         {
             InitializeInternalComponent();
+            SevenZipProcessWaitTime = TimeSpan.FromMinutes(3);
         }
 
         /// <summary>
@@ -167,6 +168,8 @@
         #endregion
 
         #region Public Properties
+
+        public TimeSpan SevenZipProcessWaitTime { get; set; }
 
         /// <summary>
         /// Gets or Sets the MySqlConnection that used by this instance.
@@ -1275,7 +1278,13 @@
                 process.Start();
                 // dispose is supposed to wait, but it's just in my nature to put some defesniveness in
 
-                process.WaitForExit();
+                bool exitedWithinTime = process.WaitForExit((int)SevenZipProcessWaitTime.TotalMilliseconds);
+
+                if (!exitedWithinTime)
+                {
+                    process.Kill();
+                    throw new Exception(string.Format("7Zip process did not exit within {0} seconds!", SevenZipProcessWaitTime.TotalSeconds));
+                }
             }
 
             exportInformation.FileName = newFileName;
