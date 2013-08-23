@@ -8,10 +8,11 @@
     // the following items are needed to add into your project.
     //
     // Required Dependencies:
-    // 1. MySql.Data.DLL (http://www.mysql.com)
-    // 2. DotNetZip (http://dotnetzip.codeplex.com/)
+    // 1. MySql.Data.DLL (http://www.mysql.com or via NuGET)
+    // 2. DotNetZip (http://dotnetzip.codeplex.com or via NuGET)
 
     #region Using Directives
+
 
     using System;
     using System.Collections.Generic;
@@ -30,8 +31,7 @@
 
     using MySql.Data.MySqlClient;
     using MySql.Data.Types;
-
-    using global::MySqlBackup.Compression;
+    using Compression;
 
     #endregion
 
@@ -50,7 +50,6 @@
         #endregion
 
         #region Fields
-
         private MySqlCommand _cmd = new MySqlCommand();
 
         private MySqlConnection _conn = new MySqlConnection();
