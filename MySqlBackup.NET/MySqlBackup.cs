@@ -22,6 +22,7 @@
     using System.Globalization;
     using System.IO;
     using System.Linq;
+    using System.Reflection;
     using System.Text;
 
     using Ionic.Zip;
@@ -707,7 +708,9 @@
 
         private void ExportStart(ExportInformation _exportInfo)
         {
-            using (textWriter = new StreamWriter(_exportInfo.FileName, false, utf8WithoutBOM))
+            string workingFolder = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
+            string exportOutputFilename = Path.Combine(workingFolder, _exportInfo.FileName);
+            using (textWriter = new StreamWriter(exportOutputFilename, false, utf8WithoutBOM))
             {
                 cancelProcess = false;
 
@@ -1280,7 +1283,7 @@
             newFileName = newFileName + ".7z";
 
             string destinationFile = Path.Combine(SystemDrivePath, newFileName);
-            string sourceFile = Path.Combine(Environment.CurrentDirectory, exportInformation.FileName);
+            string sourceFile = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), exportInformation.FileName);
 
             CompressionEventArgs args = new CompressionEventArgs
                 {
