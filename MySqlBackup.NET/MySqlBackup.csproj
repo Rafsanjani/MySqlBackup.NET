@@ -46,6 +46,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Compression\CompressionEventArgs.cs" />
     <Compile Include="Compression\CompressionType.cs" />
     <Compile Include="Database.cs" />
     <Compile Include="ExportCompleteArg.cs" />

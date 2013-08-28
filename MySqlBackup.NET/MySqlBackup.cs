@@ -133,6 +133,12 @@
 
         #region Delegates
 
+        public delegate void OnCompressionStartEvent(object sender, CompressionEventArgs args);
+
+        public delegate void OnCompressionEndEvent(object sender, CompressionEventArgs args);
+
+        public delegate void OnCompressionExceptionEvent(object sender, CompressionEventArgs args);
+
         public delegate void exportComplete(object sender, ExportCompleteArg e);
 
         public delegate void exportProgressChange(object sender, ExportProgressArg e);
@@ -144,6 +150,10 @@
         #endregion
 
         #region Public Events
+
+        public event OnCompressionEndEvent OnCompressionEnd;
+        public event OnCompressionStartEvent OnCompressionStart;
+        public event OnCompressionExceptionEvent OnCompressionException;
 
         /// <summary>
         /// Occur when Export processs is finished.
@@ -1211,6 +1221,7 @@
 
             #region Compression
 
+
             if (_exportInfo.CompressionType != CompressionType.Off)
             {
                 switch (_exportInfo.CompressionType)
@@ -1271,23 +1282,62 @@
             string destinationFile = Path.Combine(SystemDrivePath, newFileName);
             string sourceFile = Path.Combine(Environment.CurrentDirectory, exportInformation.FileName);
 
-            using (var process = new Process())
-            {
-                process.StartInfo.FileName = fullPathToZip;
-                process.StartInfo.Arguments = string.Format("a {0} {1}", destinationFile, sourceFile);
-                process.Start();
-                // dispose is supposed to wait, but it's just in my nature to put some defesniveness in
-
-                bool exitedWithinTime = process.WaitForExit((int)SevenZipProcessWaitTime.TotalMilliseconds);
-
-                if (!exitedWithinTime)
+            CompressionEventArgs args = new CompressionEventArgs
                 {
-                    process.Kill();
-                    throw new Exception(string.Format("7Zip process did not exit within {0} seconds!", SevenZipProcessWaitTime.TotalSeconds));
-                }
+                    SourceLocation = sourceFile,
+                    DestinationLocation = destinationFile,
+                    CompressionType = CompressionType.SevenZip,
+                    OriginalSize = GetFileSize(sourceFile) // MB
+                };
+
+            if (OnCompressionStart != null)
+            {
+
+                OnCompressionStart(this, args);
             }
 
+            try
+            {
+                using (var process = new Process())
+                {
+                    process.StartInfo.FileName = fullPathToZip;
+                    process.StartInfo.Arguments = string.Format("a {0} {1}", destinationFile, sourceFile);
+                    process.Start();
+                    // dispose is supposed to wait, but it's just in my nature to put some defesniveness in
+
+                    bool exitedWithinTime = process.WaitForExit((int)SevenZipProcessWaitTime.TotalMilliseconds);
+
+                    if (!exitedWithinTime)
+                    {
+                        process.Kill();
+                        throw new Exception(string.Format("7Zip process did not exit within {0} seconds!", SevenZipProcessWaitTime.TotalSeconds));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                args.OccurredException = ex;
+                if (OnCompressionException != null)
+                {
+                    OnCompressionException(this, args);
+                }
+
+                throw;
+            }
+
+            if (OnCompressionEnd != null)
+            {
+                args.CompressedSize = GetFileSize(destinationFile);
+                OnCompressionEnd(this, args);
+            }
+
+
             exportInformation.FileName = newFileName;
+        }
+
+        private long GetFileSize(string fullPath)
+        {
+            return ((new FileInfo(fullPath).Length) / 1024) / 1024; //MB;
         }
 
         private void GenerateZipFile(ExportInformation exportInformation)
