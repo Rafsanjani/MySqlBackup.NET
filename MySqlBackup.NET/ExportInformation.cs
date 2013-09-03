@@ -43,45 +43,6 @@
         }
 
         /// <summary>
-        /// Gets or Sets the tables that will be exported
-        /// </summary>
-        public string[] TablesToBeExported
-        {
-            get
-            {
-                if (TableCustomSql == null || !TableCustomSql.Any())
-                {
-                    return null;
-                }
-                else
-                {
-                    string[] sa = new string[TableCustomSql.Count];
-                    int count = -1;
-                    foreach (KeyValuePair<string, string> kv in TableCustomSql)
-                    {
-                        count++;
-                        sa[count] = kv.Key;
-                    }
-                    return sa;
-                }
-            }
-            set
-            {
-                if (value != null && value.Length > 0)
-                {
-                    foreach (string s in value)
-                    {
-                        TableCustomSql.Add(s, string.Format("SELECT * FROM `{0}`;", s));
-                    }
-                }
-                else
-                {
-                    TableCustomSql = null;
-                }
-            }
-        }
-
-        /// <summary>
         /// Gets or Sets a value indicates whether the Dump Time should recorded in dump file.
         /// </summary>
         public bool RecordDumpTime = true;
@@ -134,6 +95,11 @@
                 return _saltSize;
             }
         }
+
+        /// <summary>
+        /// Gets or sets a list of table names you do NOT want exporting.
+        /// </summary>
+        public IEnumerable<UnexportableTable> TablesToNotExport { get; set; }
 
         /// <summary>
         /// Gets or Sets the full path and file name (dump file) that will be saved to. The output of the export process.

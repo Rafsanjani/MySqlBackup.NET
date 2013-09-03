@@ -60,18 +60,11 @@ namespace MySqlBackup
         /// <summary>
         /// Gets all table's name.
         /// </summary>
-        public string[] TableNames
+        public IEnumerable<string> TableNames
         {
             get
             {
-                string[] sa = new string[Tables.Count];
-                int count = -1;
-                foreach (KeyValuePair<string, Table> kv in Tables)
-                {
-                    count++;
-                    sa[count] = kv.Key;
-                }
-                return sa;
+                return Tables.Select(t => t.Key);
             }
         }
 

@@ -330,7 +330,7 @@
                 _conn.Open();
             }
 
-            string[] tables = _database.TableNames;
+            IEnumerable<string> tables = _database.TableNames;
 
             foreach (string t in tables)
             {
@@ -787,9 +787,16 @@
                 if (_exportInfo.TableCustomSql == null || _exportInfo.TableCustomSql.Count == 0)
                 {
                     _dicTableCustomSql = new Dictionary<string, string>();
-                    foreach (string s in DatabaseInfo.TableNames)
+                    IEnumerable<string> tablesToExport = _exportInfo.TablesToNotExport == null
+                                                         || !_exportInfo.TablesToNotExport.Any()
+                                                             ? DatabaseInfo.TableNames
+                                                             : DatabaseInfo.TableNames.Where(
+                                                                 s =>
+                                                                 !_exportInfo.TablesToNotExport.Select(t => t.Name)
+                                                                             .Contains(s));
+                    foreach (string tableName in tablesToExport)
                     {
-                        _dicTableCustomSql.Add(s, string.Format("SELECT * FROM `{0}`;", s));
+                        _dicTableCustomSql.Add(tableName, string.Format("SELECT * FROM `{0}`;", tableName));
                     }
                 }
                 else

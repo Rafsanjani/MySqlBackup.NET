@@ -59,6 +59,7 @@
     <Compile Include="MySqlBackup.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Table.cs" />
+    <Compile Include="UnexportableTable.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
